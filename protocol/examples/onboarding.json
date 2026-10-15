@@ -1,0 +1,166 @@
+{
+  "documentId": "onboarding_main",
+  "revision": 1,
+  "schemaVersion": "1.0",
+  "minimumRendererVersion": {
+    "ios": 1,
+    "flutter": 1
+  },
+  "requiredCapabilities": [
+    "paywallScreen.v1",
+    "hero.v1",
+    "heading.v1",
+    "benefitList.v1",
+    "product_picker.v1",
+    "informationSection.v1",
+    "legalActions.v1",
+    "spacer.v1",
+    "purchase_bar.v1",
+    "closeButton.v1"
+  ],
+  "placement": "onboarding_complete",
+  "localization": {
+    "defaultLocale": "en",
+    "locales": {
+      "en": {
+        "strings": {
+          "title.main": "Move comfortably, every day",
+          "info.title": "Made for your routine",
+          "info.body": "Follow gentle guided sessions at your own pace.",
+          "cta.continue": "Continue",
+          "close": "Close paywall",
+          "hero.alt": "A gentle movement routine"
+        },
+        "lists": {
+          "benefits.main": [
+            "Guided movement sessions",
+            "A routine that fits your day",
+            "Track your progress"
+          ]
+        }
+      },
+      "zh-Hans": {
+        "strings": {
+          "title.main": "每天轻松动起来",
+          "info.title": "适合你的日常节奏",
+          "info.body": "跟随温和的引导课程，按自己的节奏练习。",
+          "cta.continue": "继续",
+          "close": "关闭订阅页",
+          "hero.alt": "温和的日常运动"
+        },
+        "lists": {
+          "benefits.main": [
+            "引导式运动课程",
+            "融入日常的练习计划",
+            "记录每一次进步"
+          ]
+        }
+      }
+    }
+  },
+  "tokens": {
+    "color": {
+      "accent": "interactiveBlue",
+      "surface": "paywallSurface"
+    },
+    "spacing": {
+      "pageX": 24,
+      "section": 20,
+      "itemGap": 12
+    },
+    "shape": {
+      "card": "radius26",
+      "cta": "capsule"
+    }
+  },
+  "tree": {
+    "type": "paywallScreen",
+    "nodeId": "root",
+    "props": {
+      "backgroundToken": "surface"
+    },
+    "children": [
+      {
+        "type": "closeButton",
+        "nodeId": "close",
+        "props": {
+          "labelKey": "close",
+          "action": {
+            "type": "dismiss",
+            "reason": "userClose"
+          }
+        }
+      },
+      {
+        "type": "hero",
+        "nodeId": "hero",
+        "props": {
+          "assetId": "movement_hero",
+          "altKey": "hero.alt",
+          "aspectRatio": 1.8
+        }
+      },
+      {
+        "type": "heading",
+        "nodeId": "title",
+        "props": {
+          "textKey": "title.main",
+          "typography": "titleXL",
+          "alignment": "center"
+        }
+      },
+      {
+        "type": "benefitList",
+        "nodeId": "benefits",
+        "props": {
+          "itemsKey": "benefits.main"
+        }
+      },
+      {
+        "type": "spacer",
+        "nodeId": "gap",
+        "props": {
+          "spacingToken": "itemGap"
+        }
+      },
+      {
+        "type": "productPicker",
+        "nodeId": "products",
+        "props": {
+          "catalogKey": "default",
+          "selection": "recommended"
+        }
+      },
+      {
+        "type": "informationSection",
+        "nodeId": "information",
+        "props": {
+          "titleKey": "info.title",
+          "bodyKey": "info.body",
+          "collapsible": true
+        }
+      },
+      {
+        "type": "legalActions",
+        "nodeId": "legal",
+        "props": {
+          "showRestore": true
+        }
+      }
+    ]
+  },
+  "bottomBar": {
+    "type": "purchaseBar",
+    "nodeId": "purchase",
+    "props": {
+      "titleKey": "cta.continue",
+      "action": {
+        "type": "purchaseSelected"
+      }
+    }
+  },
+  "tracking": {
+    "surface": "paywall",
+    "variant": "baseline"
+  }
+}

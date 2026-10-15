@@ -1,0 +1,283 @@
+{
+  "schemaVersion": "1.0",
+  "rendererVersion": 1,
+  "components": [
+    {
+      "type": "paywallScreen",
+      "capability": "paywallScreen.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "backgroundToken": {
+            "type": "string",
+            "enum": [
+              "surface"
+            ]
+          }
+        },
+        "required": [
+          "backgroundToken"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "hero",
+      "capability": "hero.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "altKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "aspectRatio": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 3
+          }
+        },
+        "required": [
+          "assetId",
+          "altKey",
+          "aspectRatio"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "heading",
+      "capability": "heading.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "textKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "typography": {
+            "type": "string",
+            "enum": [
+              "titleXL",
+              "bodyM",
+              "caption"
+            ]
+          },
+          "alignment": {
+            "type": "string",
+            "enum": [
+              "leading",
+              "center"
+            ]
+          }
+        },
+        "required": [
+          "textKey",
+          "typography",
+          "alignment"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "benefitList",
+      "capability": "benefitList.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "itemsKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          }
+        },
+        "required": [
+          "itemsKey"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "productPicker",
+      "capability": "product_picker.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "catalogKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "selection": {
+            "type": "string",
+            "enum": [
+              "recommended",
+              "first"
+            ]
+          }
+        },
+        "required": [
+          "catalogKey",
+          "selection"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "informationSection",
+      "capability": "informationSection.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "titleKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "bodyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "collapsible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "titleKey",
+          "bodyKey",
+          "collapsible"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "legalActions",
+      "capability": "legalActions.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "showRestore": {
+            "const": true
+          }
+        },
+        "required": [
+          "showRestore"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "spacer",
+      "capability": "spacer.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "spacingToken": {
+            "type": "string",
+            "enum": [
+              "pageX",
+              "section",
+              "itemGap"
+            ]
+          }
+        },
+        "required": [
+          "spacingToken"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "purchaseBar",
+      "capability": "purchase_bar.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "titleKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "action": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "purchaseSelected"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "titleKey",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "closeButton",
+      "capability": "closeButton.v1",
+      "props": {
+        "type": "object",
+        "properties": {
+          "labelKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "action": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "dismiss"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "userClose"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "labelKey",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

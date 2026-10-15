@@ -1,0 +1,10 @@
+{
+  "kind": "web-paywall",
+  "bridgeVersion": 2,
+  "documentId": "subscription_example",
+  "revision": 1,
+  "pageUrl": "https://paywall.example.com/subscription/v1/index.html",
+  "catalogKey": "default",
+  "productRefs": ["com.example.subscription.annual"],
+  "initialProductRef": "com.example.subscription.annual"
+}

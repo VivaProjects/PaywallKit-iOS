@@ -1,0 +1,32 @@
+{
+  "publicKey": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "envelope": {
+    "algorithm": "Ed25519",
+    "keyId": "contract-test",
+    "payload": "eyJjb250cmFjdCI6InBheXdhbGwiLCJ2ZXJzaW9uIjoxfQ==",
+    "signature": "fQnkWayBoGWEDJemmKUnjWgbc4qgGckNeFFVevvV8KLd7ktJ/ZQ3qZQcHAW7zahJfq6z5fKj2wt9Jxpm86iMAA=="
+  },
+  "payload": "{\"contract\":\"paywall\",\"version\":1}",
+  "buckets": [
+    {
+      "installationId": "install-1",
+      "experimentId": "test-a",
+      "bucket": 8784
+    },
+    {
+      "installationId": "install-2",
+      "experimentId": "test-a",
+      "bucket": 3260
+    },
+    {
+      "installationId": "install-1",
+      "experimentId": "test-b",
+      "bucket": 1954
+    },
+    {
+      "installationId": "安装-三",
+      "experimentId": "实验-甲",
+      "bucket": 8473
+    }
+  ]
+}
