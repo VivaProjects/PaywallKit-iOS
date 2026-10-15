@@ -1,0 +1,17 @@
+.DS_Store
+.build/
+.swiftpm/
+.dart_tool/
+.flutter-plugins*
+build/
+DerivedData/
+**/xcuserdata/
+*.xcuserstate
+__pycache__/
+*.pyc
+pubspec.lock
+.env
+.env.*
+*.p8
+*.p12
+*.mobileprovision
