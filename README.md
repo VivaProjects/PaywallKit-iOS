@@ -10,12 +10,12 @@ iOS 支付墙 SDK：H5 WebView 与桥接、配置加载、会话管理、预加�
 https://github.com/VivaProjects/PaywallKit-iOS.git
 ```
 
-选择版本 `0.1.0`，并将 `PaywallKit` 产品添加到 App target。代码中使用 `import PaywallKit`。
+选择版本 `0.1.1`，并将 `PaywallKit` 产品添加到 App target。代码中使用 `import PaywallKit`。
 
 也可在宿主 Package.swift 中配置：
 
 ```swift
-.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.1.0")
+.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.1.1")
 ```
 
 宿主 target 添加 `.product(name: "PaywallKit", package: "PaywallKit-iOS")`。私有仓库接入需要 GitHub 读取权限。
@@ -40,3 +40,5 @@ xcodebuild -scheme PaywallKit -destination 'generic/platform=iOS' -configuration
 ```
 
 构建检查不代替宿主集成、真机购买与恢复验证。
+
+版本由 `VERSION` 管理，发布流程见 [发布说明](docs/RELEASING.md)。

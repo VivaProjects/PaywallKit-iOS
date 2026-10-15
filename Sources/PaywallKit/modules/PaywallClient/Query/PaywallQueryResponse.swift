@@ -11,12 +11,12 @@ struct PaywallQueryResponse: Decodable {
     let code: String
     let data: [Position]?
 
-    /// 逐页完成包与商品校验，全部成功后再交给 SDK 原子更新配置。
+    /// 点位独立解析；坏页面跳过，空结果交由入口使用本地兜底。
     @MainActor
     static func transform(_ bytes: Data, configuration: PaywallQueryConfiguration,
                           catalog: PaywallCatalog) async throws -> Data {
         let response = try JSONDecoder().decode(Self.self, from: bytes)
-        guard response.code == "200", let positions = response.data, !positions.isEmpty, positions.count <= 100 else {
+        guard response.code == "200", let positions = response.data, positions.count <= 100 else {
             throw WebPaywallError.invalidDocument
         }
         var placements: [String: String] = [:]
@@ -26,26 +26,34 @@ struct PaywallQueryResponse: Decodable {
         for position in positions where position.matched {
             guard let placement = configuration.placements[position.positionKey] else { continue }
             guard placements[placement] == nil,
-                  let address = position.h5Url, let url = URL(string: address),
-                  let mode = position.displayModeKey,
-                  WebPaywallConfiguration.Presentation(rawValue: mode) != nil else {
-                throw WebPaywallError.invalidDocument
-            }
+                  let address = position.h5Url, let url = URL(string: address) else { continue }
+            let mode = position.displayModeKey.flatMap(WebPaywallConfiguration.Presentation.init(rawValue:))
+                ?? .fullScreen
             let document: WebPaywallDocument
-            if let existing = loaded[url] { document = existing }
-            else {
-                document = try await WebPaywallPackageLoader.load(
-                    pageURL: url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
-                    allowedOrigins: configuration.allowedOrigins,
-                    catalog: catalog, developmentHTTPOrigin: configuration.developmentHTTPOrigin)
-                loaded[url] = document
+            do {
+                if let existing = loaded[url] { document = existing }
+                else {
+                    document = try await WebPaywallPackageLoader.load(
+                        pageURL: url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
+                        allowedOrigins: configuration.allowedOrigins,
+                        catalog: catalog, developmentHTTPOrigin: configuration.developmentHTTPOrigin)
+                    loaded[url] = document
+                }
+                try Task.checkCancellation()
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue,
+                                          "query.page_skipped", "placement=\(placement) error=\(error)")
+                continue
             }
-            try Task.checkCancellation()
+            // 同一文档的冲突配置只影响当前点位，不覆盖已成功解析的页面。
             if let existing = paywalls[document.documentId], existing["pageUrl"] as? String != document.pageURL.absoluteString {
-                throw WebPaywallError.invalidDocument
+                continue
             }
+            guard paywalls[document.documentId] != nil || paywalls.count < 8 else { continue }
             placements[placement] = document.documentId
-            presentations[placement] = mode
+            presentations[placement] = mode.rawValue
             paywalls[document.documentId] = payload(document)
         }
         return try JSONSerialization.data(withJSONObject: [
