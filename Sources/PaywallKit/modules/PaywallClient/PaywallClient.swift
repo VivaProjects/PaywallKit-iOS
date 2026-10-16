@@ -129,19 +129,20 @@ public final class PaywallClient {
         self.init(configuration: source, retainedPlacements: retainedPlacements)
     }
 
-    /// 启动预取与展示入口共享请求；成功冻结到当前 Client，失败允许下一次主动重试。
+    /// 启动预取与展示入口共享请求；查询入口在本次 Client 生命周期内只加载一次。
     public func prepare() async throws {
         _ = try await configuration()
     }
 
-    /// 后台更新后刷新配置开关，不改变已冻结的展示输入。
+    /// 自定义来源可主动刷新；查询入口始终复用首次成功或失败结果。
     public func refresh() async throws {
-        if configurationTask == nil { cachedConfiguration = nil }
+        if queryRuntime == nil, configurationTask == nil { cachedConfiguration = nil }
         _ = try await configuration()
     }
 
-    /// 使后续解析重新读取请求条件；已展示页面仍持有自己的不可变快照。
+    /// 仅自定义来源允许失效；查询入口的首次条件与结果保持到 Client 释放。
     public func invalidateConfiguration() {
+        guard queryRuntime == nil else { return }
         configurationGeneration = UUID()
         configurationTask?.cancel()
         configurationTask = nil
@@ -201,7 +202,7 @@ public final class PaywallClient {
         return page.isReady ? page : nil
     }
 
-    /// 独立共享任务不随单个页面关闭而取消，失败任务及时移除，避免重试永久复用错误。
+    /// 独立任务不随单个页面关闭而取消；查询入口的失败立即交给已有兜底。
     private func configuration() async throws -> WebPaywallConfiguration {
         while true {
             try Task.checkCancellation()
@@ -218,11 +219,14 @@ public final class PaywallClient {
         }
     }
 
-    /// 合并预取与刷新请求，并阻止过期任务清理新任务或写回旧配置。
+    /// 查询入口保留首次任务的成功或失败结果，后续入口不得再次访问配置接口。
     private func loadConfiguration() async throws -> WebPaywallConfiguration {
         let generation = configurationGeneration
         let task = Task { [self] in
-            defer { if generation == configurationGeneration { configurationTask = nil } }
+            // 查询失败也保留任务结果；普通自定义来源仍允许主动重试。
+            defer {
+                if queryRuntime == nil, generation == configurationGeneration { configurationTask = nil }
+            }
             let value = try await source.load()
             try Task.checkCancellation()
             guard generation == configurationGeneration else { throw CancellationError() }
