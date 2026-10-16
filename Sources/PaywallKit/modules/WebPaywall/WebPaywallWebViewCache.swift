@@ -122,7 +122,7 @@ public final class WebPaywallWebViewCache {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        let webView = WebPaywallDiagnosticWebView(frame: .zero, configuration: configuration)
+        let webView = WebPaywallWebViewFactory.make(configuration: configuration)
         webView.diagnosticEnvironment = environment.runtimeEnvironment.rawValue
         webView.isOpaque = false
         webView.backgroundColor = .clear
