@@ -15,6 +15,7 @@ enum WebPaywallWebViewFactory {
         // 链接预览包含系统复制菜单，需要与文字选择一同关闭。
         let webView = WebPaywallDiagnosticWebView(frame: .zero, configuration: configuration)
         webView.allowsLinkPreview = false
+        webView.uiDelegate = webView
         return webView
     }
 
@@ -26,12 +27,16 @@ enum WebPaywallWebViewFactory {
           -webkit-user-select: none !important;
           user-select: none !important;
           -webkit-touch-callout: none !important;
+          -webkit-user-drag: none !important;
         }
       `;
       document.documentElement.appendChild(style);
       // 只拦截选择、复制和菜单事件，保留页面按钮及滚动行为。
-      for (const name of ['selectstart', 'copy', 'cut', 'contextmenu']) {
-        document.addEventListener(name, event => event.preventDefault(), true);
+      for (const name of ['selectstart', 'copy', 'cut', 'contextmenu', 'dragstart']) {
+        document.addEventListener(name, event => {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }, true);
       }
     })();
     """

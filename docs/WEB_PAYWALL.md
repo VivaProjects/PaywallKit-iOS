@@ -30,6 +30,8 @@
 
 所有 SDK H5 页面统一禁止文字长按选择、复制、剪切及图片和链接的长按系统菜单。普通加载、离线包和预加载页面共用同一创建入口，文档开始加载时即注入限制，并覆盖子框架。按钮点击、正文滚动和购买桥接继续使用原有行为。
 
+0.1.3 起同时拒绝原生上下文菜单及编辑动作，并在挂载、布局和触摸分发前关闭内容子视图上的长按识别器与拖拽交互，不依赖 WebKit 私有类名或替换手势代理。测试环境的挂载日志包含 `longPressPolicy=native.v2`；更新包引用后仍须重新构建并安装宿主，现有运行中的 App 不会自动替换 SDK 代码。
+
 宿主可通过 `WebPaywallWebViewCache` 预加载，展示时传入同一 cache、environment 和 custom。环境、商品、资格、点位或 custom 变化后创建新会话，不复用旧 WebView；失效时调用 destroy。配置 `.destroyAfterDismissal` 可在关闭卸载后释放，默认 `.keepAfterDismissal` 保留热页面。
 
 H5 页面与资源使用可信 HTTPS 来源和不可变版本地址。离线包由宿主提供，远端包由发布清单描述并校验；SDK 本身不提供页面或配置发布服务。`WebPaywallResourceCache.shared.clear()` 用于清理可释放缓存，活跃会话资源受租约保护。
