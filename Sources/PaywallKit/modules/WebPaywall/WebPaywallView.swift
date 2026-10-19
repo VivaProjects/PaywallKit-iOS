@@ -66,14 +66,9 @@ import WebKit
                                         onResourceSource: onResourceSource)
                         .allowsHitTesting(ready && isPresented)
                         .accessibilityHidden(!ready || !isPresented)
-                    if !ready {
-                        Color(uiColor: .systemBackground).ignoresSafeArea()
-                        VStack(spacing: 20) {
-                            ProgressView()
-                            if host.allowsDismiss {
-                                Button(host.copy.close, action: host.dismiss)
-                            }
-                        }
+                    if !ready && isPresented {
+                        WebPaywallLoadingOverlay(label: host.copy.loading, closeLabel: host.copy.close,
+                                                 onClose: host.allowsDismiss ? host.dismiss : nil)
                     }
                 }
             }

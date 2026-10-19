@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class PaywallSessionBridge: PaywallPurchaseBridge {
     var requiresStoreProducts: Bool { base.requiresStoreProducts }
+    var allowsStoreActions: Bool { base.allowsStoreActions }
 
     private let base: any PaywallPurchaseBridge
     private let event: (PaywallSessionEvent) -> Void

@@ -67,7 +67,7 @@ final class PaywallSessionModel: ObservableObject {
         isClosing = false
         state = .loading
         let context = fallbackContext ?? resolved?.fallbackContext ?? client.makeFallbackContext(placement)
-        if hasLoaded { context.beginRetry() }
+        if hasLoaded { context.beginPreparation() }
         hasLoaded = true
         fallbackContext = context
         var preparingInput = false
@@ -81,7 +81,7 @@ final class PaywallSessionModel: ObservableObject {
             guard generation == token else { return }
             context.record(input.document)
             if let resolution = context.resolution { onEvent(.resolved(resolution)) }
-            activate(input: input, cache: client.pageCache(for: placement, identity: cacheIdentity),
+            activate(input: input, cache: client.pageCache(for: placement, identity: cacheIdentity, custom: input.custom),
                      token: token, onEvent: onEvent)
         } catch is CancellationError { return }
         catch {
@@ -151,7 +151,7 @@ final class PaywallSessionModel: ObservableObject {
                 guard generation == token, !isClosing, !Task.isCancelled else { return }
                 hasReportedReady = false
                 if let resolution = context.resolution { onEvent(.resolved(resolution)) }
-                activate(input: input, cache: client.pageCache(for: placement, identity: cacheIdentity),
+                activate(input: input, cache: client.pageCache(for: placement, identity: cacheIdentity, custom: input.custom),
                          token: token, onEvent: onEvent)
                 return
             } catch is CancellationError { return }

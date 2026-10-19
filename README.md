@@ -1,44 +1,33 @@
-# PaywallKit-iOS
+# PaywallKit iOS SDK
 
-iOS 支付墙 SDK：H5 WebView 与桥接、配置加载、会话管理、预加载、离线资源缓存及语义 JSON 原生回退渲染。
+独立 iOS SDK 仓库。根目录即 Swift Package，最低 iOS 16；源码、资源、协议快照、工具与文档均包含在本仓库，不依赖 H5 管理项目或 Flutter SDK。
 
-## 安装
+## 接入
 
-要求 iOS 16+、Swift 5.9+。在 Xcode 的 File → Add Package Dependencies 中添加：
+本地接入：在 Xcode 的 Add Local Package 中选择当前目录，添加 `PaywallKit` 产品。
 
-```
-https://github.com/VivaProjects/PaywallKit-iOS.git
-```
-
-选择版本 `0.1.1`，并将 `PaywallKit` 产品添加到 App target。代码中使用 `import PaywallKit`。
-
-也可在宿主 Package.swift 中配置：
+Git 发布后：在 Xcode 的 Add Package Dependencies 中填写本仓库的真实 Git URL，选择已发布的 `X.Y.Z` 版本和 `PaywallKit` 产品。也可在宿主 `Package.swift` 中声明：
 
 ```swift
-.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.1.1")
+.package(url: "<IOS_SDK_GIT_URL>", exact: "0.1.0")
 ```
 
-宿主 target 添加 `.product(name: "PaywallKit", package: "PaywallKit-iOS")`。私有仓库接入需要 GitHub 读取权限。
+示例 URL 需要替换，版本标签必须已经存在；当前版本登记不表示远端已发布。
 
-## 接入与职责
-
-- [H5 与宿主接入](docs/WEB_PAYWALL.md)
-- [原生 JSON 回退接入](docs/INTEGRATION.md)
-- [版本记录](CHANGELOG.md)
-
-宿主负责商品目录、可信来源、StoreKit 查询、购买、恢复和权益验证；SDK 不内置业务服务地址、商品绑定或 H5 页面。页面包和配置由宿主提供。原生仅向 H5 提供商店价格及披露、适用资格、允许的环境字段和会话 custom；页面文案由 H5 content.json 维护。
-
-此仓库只发布 iOS SDK。版本通过语义化 Git tag 管理，SDK 版本与桥协议版本分别维护。仓库未授予开源许可证，使用权限由仓库所有者决定。
-
-## 构建
-
-在 macOS 和 Xcode 环境下执行：
+## 维护与发布
 
 ```sh
-xcodebuild -scheme PaywallKit -destination 'generic/platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO build
-xcodebuild -scheme PaywallKit -destination 'generic/platform=iOS' -configuration Release CODE_SIGNING_ALLOWED=NO build
+python3 tools/check_package.py
+python3 tools/version.py check
+swift package dump-package
+xcodebuild -scheme PaywallKit -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/paywall-ios-build CODE_SIGNING_ALLOWED=NO build
 ```
 
-构建检查不代替宿主集成、真机购买与恢复验证。
+版本只由本仓库 `VERSION` 管理，变更记录为 `CHANGELOG.md`。升版和发布步骤见 [发布说明](docs/RELEASING.md)。
 
-版本由 `VERSION` 管理，发布流程见 [发布说明](docs/RELEASING.md)。
+- [宿主接入](docs/INTEGRATION.md)
+- [H5 桥接](docs/WEB_PAYWALL.md)
+- [协议契约](docs/PROTOCOL.md)
+- [本地包与回退](docs/LOCAL_PAYWALL_FALLBACK.md)
+
+SDK 负责宿主交互、商品查询接口、购买/恢复桥接、会话、缓存及原生回退。业务 H5 文案和页面包由宿主提供，不随 SDK 发布。协议快照位于 `protocol/`，变更时协调其他实现的兼容性，但各自独立发版。

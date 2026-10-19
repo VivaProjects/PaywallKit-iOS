@@ -12,6 +12,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
     let client: PaywallClient
     let placement: (Item) -> String?
     let skipsMissingPlacement: Bool
+    let presentsImmediately: Bool
     let waitsForReady: (Item) -> Bool
     let prepareForPresentation: ((Item, WebPaywallDocument) async throws -> PaywallSessionInput)?
     let preloadedPage: ((Item) -> PaywallPreload?)?
@@ -133,20 +134,13 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
         }
     }
 
-    /// 请求期间提供取消入口，防止重复点击或长时间无反馈。
+    /// 旧展示策略在配置等待期间提供取消入口；立即展示时由页面内部负责加载状态。
     @ViewBuilder
     private var loadingOverlay: some View {
-        if let item, !waitsForReady(item), activeItem == nil && loadError == nil
+        if let item, !shouldPresentImmediately(item), !waitsForReady(item), activeItem == nil && loadError == nil
             && !client.hasConfiguration {
-            ZStack {
-                Color.black.opacity(0.15).ignoresSafeArea()
-                VStack(spacing: 16) {
-                    ProgressView("Loading subscriptions…")
-                    Button("Close", action: finish)
-                }
-                .padding(24)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-            }
+            WebPaywallLoadingOverlay(label: "Loading subscriptions…", closeLabel: "Close",
+                                     onClose: finish)
         }
     }
 
@@ -183,8 +177,14 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
         }
         guard activeItem == nil, !hasCommittedPresentation else { return }
         let token = beginRequest(value)
+        if !waitsForReady(value), let key = placement(value) { client.prioritizePresentation(key) }
         if let preloadedPage {
             presentPreloaded(value, preload: preloadedPage(value))
+            return
+        }
+        // 主动入口先提交容器，配置、商品和网页加载由内部会话统一维护。
+        if shouldPresentImmediately(value) {
+            presentImmediately(value)
             return
         }
         do {
@@ -193,21 +193,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
             try Task.checkCancellation()
             guard hasRequest, item?.id == value.id else { return }
             guard canPresentPrepared() else { finish(); return }
-            resolvedPlacement = selected
-            mode = selected?.presentation ?? .fullScreen
-            if waitsForReady(value) {
-                guard let selected, let prepareForPresentation else {
-                    throw WebPaywallError.invalidDocument
-                }
-                let input = try await prepareForPresentation(value, selected.document)
-                try Task.checkCancellation()
-                guard preparationToken == token, item?.id == value.id else { return }
-                preparingItem = value
-                preparedPage = PaywallPreparedPage(placement: selected, input: input)
-            } else {
-                hasCommittedPresentation = true
-                activeItem = value
-            }
+            try await presentResolved(value, selected: selected, token: token)
         } catch is CancellationError {
             return
         } catch {
@@ -216,6 +202,48 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
             if waitsForReady(value) || (error as? PaywallFailure) == .disabled { finish() }
             else { loadError = error.localizedDescription }
         }
+    }
+
+    /// 后台准备、缓存接管和缺失跳过均优先于主动入口的立即展示选项。
+    private func shouldPresentImmediately(_ value: Item) -> Bool {
+        presentsImmediately && !waitsForReady(value) && !skipsMissingPlacement && preloadedPage == nil
+    }
+
+    /// 主动入口冻结已知展示方式；缺少配置时本次保持全屏，避免加载后再次弹出。
+    private func presentImmediately(_ value: Item) {
+        guard canPresentPrepared() else { finish(); return }
+        // 已明确禁用的点位仍直接消费请求，不先闪现加载页。
+        if let key = placement(value) {
+            guard !client.isPlacementDisabled(key) else { finish(); return }
+            let context = client.makeFallbackContext(key)
+            resolvedPlacement = context.local
+                ? try? context.localPlacement(clientID: client.id)
+                : client.cachedPlacement(key)
+        } else {
+            resolvedPlacement = nil
+        }
+        // 只在提交前确定一次容器；内部解析不得切换已展示的全屏、Sheet 或 Push。
+        mode = resolvedPlacement?.presentation ?? .fullScreen
+        hasCommittedPresentation = true
+        activeItem = value
+    }
+
+    /// 后台入口仍等待首屏就绪，普通解析路径沿用服务端指定的展示方式。
+    private func presentResolved(_ value: Item, selected: PaywallPlacement?, token: UUID) async throws {
+        resolvedPlacement = selected
+        mode = selected?.presentation ?? .fullScreen
+        guard waitsForReady(value) else {
+            hasCommittedPresentation = true
+            activeItem = value
+            return
+        }
+        // 预渲染沿用同一个准备令牌，取消或被替换后不得补弹。
+        guard let selected, let prepareForPresentation else { throw WebPaywallError.invalidDocument }
+        let input = try await prepareForPresentation(value, selected.document)
+        try Task.checkCancellation()
+        guard preparationToken == token, item?.id == value.id else { return }
+        preparingItem = value
+        preparedPage = PaywallPreparedPage(placement: selected, input: input)
     }
 
     /// 每次请求重置准备状态；原有冷启动期限仍覆盖解析、商品与首屏渲染。
@@ -336,6 +364,8 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
 
 extension View {
     /// 按下发配置展示支付墙；被动入口可选择就绪后展示，跳过时仅清空 item。
+    /// presentsImmediately 仅用于主动入口：有缓存沿用展示方式，无缓存本次保持全屏并在页面内加载。
+    /// waitsForReady、preloadedPage 与 skipsMissingPlacement 优先保留后台等待或跳过语义。
     /// waitsForReady 需搭配 prepareForPresentation；预加载句柄优先且只接管一次。
     /// preloadedPage 未就绪时直接清空请求并调用 onDismiss，供宿主释放接续流程。
     @MainActor
@@ -344,6 +374,7 @@ extension View {
         item: Binding<Item?>,
         placement: @escaping (Item) -> String?,
         skipsMissingPlacement: Bool = false,
+        presentsImmediately: Bool = false,
         waitsForReady: @escaping (Item) -> Bool = { _ in false },
         prepareForPresentation: ((Item, WebPaywallDocument) async throws -> PaywallSessionInput)? = nil,
         preloadedPage: ((Item) -> PaywallPreload?)? = nil,
@@ -355,6 +386,7 @@ extension View {
     ) -> some View {
         modifier(PaywallPresentationModifier(
             item: item, client: client, placement: placement, skipsMissingPlacement: skipsMissingPlacement,
+            presentsImmediately: presentsImmediately,
             waitsForReady: waitsForReady, prepareForPresentation: prepareForPresentation,
             preloadedPage: preloadedPage,
             canPresentPrepared: canPresentPrepared, preparationIdentity: preparationIdentity,

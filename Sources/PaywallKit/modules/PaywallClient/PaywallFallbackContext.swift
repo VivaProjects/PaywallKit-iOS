@@ -15,12 +15,16 @@ final class PaywallFallbackContext {
     private var previous: PaywallPlacement?
     private var previousLease: WebPaywallResourceLease?
     private var triedPrevious = false
+    private let cachedFallback: PaywallPlacement?
 
-    init(placement: String, store: PaywallLocalPackageStore?, usesPreviousVersion: Bool = false) {
+    /// 主动点位优先使用自己的启动快照，兜底更新包固定为启动时的版本。
+    init(placement: String, store: PaywallLocalPackageStore?, usesPreviousVersion: Bool = false,
+         startsLocally: Bool = true, cachedFallback: PaywallPlacement? = nil) {
         requestedPlacement = placement
         self.store = store
         self.usesPreviousVersion = usesPreviousVersion
-        local = store?.placement == placement
+        self.cachedFallback = cachedFallback
+        local = startsLocally && store?.placement == placement
     }
 
     /// 冻结目标文档，不能用后续刷新后的映射寻找其他 H5 的历史。
@@ -41,6 +45,15 @@ final class PaywallFallbackContext {
     /// 本地页面整体替换绑定，仍保留原入口和原展示容器。
     func localPlacement(clientID: UUID) throws -> PaywallPlacement {
         guard let store, !store.isDisabled(requestedPlacement) else { throw PaywallFailure.disabled }
+        if !bundledOnly, let cachedFallback {
+            resolution = PaywallSessionResolution(requestedPlacement: requestedPlacement,
+                documentID: cachedFallback.document.documentId, revision: cachedFallback.document.revision ?? 0,
+                source: "update", fallbackReason: reason?.rawValue)
+            var selected = PaywallPlacement(name: requestedPlacement, document: cachedFallback.document,
+                presentation: .fullScreen, sessionPolicy: nil, clientID: clientID, fallbackContext: self)
+            selected.resourceLease = cachedFallback.resourceLease
+            return selected
+        }
         let (document, source) = try store.selection(bundledOnly: bundledOnly)
         resolution = PaywallSessionResolution(requestedPlacement: requestedPlacement, documentID: document.documentId,
                                        revision: document.revision ?? 0, source: source, fallbackReason: reason?.rawValue)
@@ -56,8 +69,10 @@ final class PaywallFallbackContext {
               let store else { return nil }
         reason = reason ?? failure
         if !local {
-            guard store.fallbackPlacements.contains(requestedPlacement) else { return nil }
+            guard store.placement == requestedPlacement || store.fallbackPlacements.contains(requestedPlacement) else { return nil }
             if let selected = try await tryPrevious(client: client) { return selected }
+            // 兜底点位自己的启动快照失败后直接回到内置包，不能重试同一坏包。
+            if store.placement == requestedPlacement { bundledOnly = true }
             local = true
         } else {
             guard !bundledOnly, resolution?.source == "update" else { return nil }
@@ -88,8 +103,8 @@ final class PaywallFallbackContext {
         catch { return nil }
     }
 
-    /// 重试只重建当前分支，不重新回到已经失败的远端页面。
-    func beginRetry() { deadline = Date().addingTimeInterval(12) }
+    /// 配置就绪或当前分支重试时重新计页面准备期限，不计入此前的缓存等待时间。
+    func beginPreparation() { deadline = Date().addingTimeInterval(12) }
 
     /// 来源回调不得把历史页或本地兜底的失败归因覆盖成普通磁盘命中。
     func record(_ document: WebPaywallDocument, source: String = "remote_or_cache") {

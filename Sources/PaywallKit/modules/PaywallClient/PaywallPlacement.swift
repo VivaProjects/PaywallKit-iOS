@@ -9,6 +9,9 @@ public struct PaywallPlacement {
     let clientID: UUID
     var fallbackContext: PaywallFallbackContext? = nil
     var historySnapshot: PaywallHistorySnapshot? = nil
+    // 查询启动快照保留远端身份用于历史归档，租约保护当前使用的完整本地包。
+    var remoteDocument: WebPaywallDocument? = nil
+    var resourceLease: WebPaywallResourceLease? = nil
 }
 
 // 保持 Swift 5.9 包兼容，不依赖新工具链的 Environment 宏。

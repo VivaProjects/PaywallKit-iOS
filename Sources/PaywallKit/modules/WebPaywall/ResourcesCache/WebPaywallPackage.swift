@@ -20,7 +20,7 @@ struct WebPaywallPackage: Codable {
                  productRefs: productRefs, initialProductRef: initialProductRef)
         }
     }
-    struct File: Codable {
+    struct File: Codable, Sendable {
         let path: String
         let size: Int
         let sha256: String

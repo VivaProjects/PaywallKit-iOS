@@ -66,8 +66,6 @@ public struct PaywallCachedPreloadView: View {
             client.invalidatePage(for: placement)
             return
         }
-        // 在异步解析之前更新缓存身份，旧商品或权益不能继续复用。
-        guard let cache = client.pageCache(for: placement, identity: cacheIdentity) else { return }
         do {
             // 本地点位与正式展示使用同一包；不能预热远端页面再展示本地版本。
             let context = client.makeFallbackContext(placement)
@@ -81,6 +79,9 @@ public struct PaywallCachedPreloadView: View {
             try Task.checkCancellation()
             let input = try await prepare(selected.document)
             try Task.checkCancellation()
+            // 准备完成后按入口参数选择缓存，正式展示使用相同身份检查旧商品或权益。
+            guard let cache = client.pageCache(for: placement, identity: cacheIdentity,
+                                               custom: input.custom) else { return }
             page = PaywallPreparedPage(placement: selected, input: input, cache: cache)
         } catch is CancellationError {
             return
