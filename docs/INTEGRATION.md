@@ -151,3 +151,7 @@ SDK 通过 `track` 回调输出固定事件及文档版本，宿主转发现有�
 `PaywallStoreProduct.isEligibleForFreeTrial` 是可选布尔字段，iOS 与 Flutter bootstrap 均透传；未提供时 H5 应按无试用承诺展示。iOS 的 `PaywallStoreKitProductMapper` 仅在账户符合 introductory offer 资格且支付方式为 `freeTrial` 时返回 `true`。Flutter 接入方必须从商店资格适配层提供此值。页面按钮文案由 H5 维护，实际试用期限、金额及条件仍使用宿主的商店披露，不解析价格字符串猜测资格；协议版本保持 2。
 
 纯展示会话可由 iOS 宿主的 `PaywallPurchaseBridge.requiresStoreProducts` 显式返回 `false`（默认 `true`），允许空商品 bootstrap 并拒绝交易动作。此权限只由原生桥决定，H5 的 custom 不得授予交易权限；现有付费会话行为不变。
+
+### 空商品展示与交易权限（0.1.5）
+
+`requiresStoreProducts` 只控制页面是否必须取得商品才能完成 bootstrap。`allowsStoreActions` 独立控制购买与恢复，默认沿用 `requiresStoreProducts`，保持旧纯展示桥禁用交易。允许空商品展示但仍提供购买的宿主，应设置 `requiresStoreProducts = false`、`allowsStoreActions = true`；购买仍必须命中本次商店返回的商品。高层会话包装桥透传两项权限，被拒绝的交易动作回传 failed，避免网页停留在等待态。桥消息格式不变。

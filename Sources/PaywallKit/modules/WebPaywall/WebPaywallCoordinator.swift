@@ -417,10 +417,14 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
 
     /// 交易沿用宿主实现；关闭后的返回值不再投递给旧 WebView。
     private func beginAction(type: String, event: [String: Any]) {
-        guard allowsActions, attached, rendered, actionTask == nil, let host,
-              host.bridge.requiresStoreProducts else { return }
+        guard allowsActions, attached, rendered, actionTask == nil, let host else { return }
         let product = (event["productRef"] as? String).flatMap { products[$0] }
-        guard type == "restore" || product != nil else { return }
+        // 显示依赖与交易权限独立；拒绝动作也回执，避免 H5 永久停留在等待态。
+        guard host.bridge.allowsStoreActions, type == "restore" || product != nil else {
+            trace("action.rejected", "type=\(type)")
+            send(["type": type + "Result", "result": "failed"])
+            return
+        }
         trace("action.start", "type=\(type)")
         actionTask = Task { [weak self] in
             guard let self else { return }
