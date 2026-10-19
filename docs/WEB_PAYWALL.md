@@ -2,6 +2,12 @@
 
 SDK 只提供通用展示、桥接、配置校验与商店交互接口。H5 页面、投放配置与服务地址由宿主业务提供，SDK 不内置业务页面或点位规则。
 
+## H5 交互限制
+
+0.1.3 起额外拒绝原生上下文菜单与编辑动作，在挂载、布局及触摸前关闭内容子视图的长按与拖拽入口；不依赖 WebKit 私有类名或替换手势代理。测试环境挂载日志包含 `longPressPolicy=native.v2`；宿主须重新构建并安装后才能使用新策略。
+
+所有 iOS SDK H5 页面统一禁止文字长按选择、复制、剪切及图片和链接的长按系统菜单。普通加载、离线包和预加载页面共用同一创建入口，文档开始加载时即注入限制，并覆盖子框架。按钮点击、正文滚动和购买桥接继续使用原有行为。
+
 ## 页面清单与商品
 
 清单格式见 [web-paywall.schema.json](../protocol/web-paywall.schema.json)，示例见 [web-paywall.json](../protocol/examples/web-paywall.json)。宿主先验证配置来源，再用可信 origin 白名单及预注册的 `PaywallCatalog` 构造 `WebPaywallDocument`。白名单不能由下发 JSON 自行授权。`productRefs` 填写真实商店商品 ID，必须属于宿主注册目录；原生按照关联页面清单查询，不沿用原点位的商品组合。
@@ -124,3 +130,23 @@ To clear idle files call `await WebPaywallResourceCache.shared.clear()` on eithe
 `sessionContext` 和 `bootstrap` 不再发送顶层 `environment`。`custom` 平铺包含 `placement`、`runtimeEnvironment`、`language`、`deviceModel`、`country`、`appVersion`，并保留宿主传入的业务字段（例如 `questionnaireResult`、`coldStartVariant`）。同名冲突时以 SDK 冻结的环境值为准。H5 从 `message.custom` / `PaywallRuntime.custom` 读取；宿主 SDK 的 environment 配置入口及缓存身份不变。
 
 这是桥消息结构变更，SDK 与页面包必须配套发布；已发布的旧页面包需要重新打包并递增 revision，不能覆盖原有不可变包。
+
+## 主动入口立即展示
+
+`paywallHost` 可传入 `presentsImmediately: true`，先展示付费墙容器，再由内部 `PaywallScreen` 加载配置、商品及网页，并提供关闭和失败重试。展示前已有可用配置时沿用其全屏、Sheet 或 Push 方式；没有配置时本次使用全屏，配置返回后不更换容器或再次弹出。加载占位不计为 H5 曝光，仍以页面就绪回执为准。
+
+该参数默认关闭。`waitsForReady`、`preloadedPage` 和 `skipsMissingPlacement` 优先保留等待就绪、缓存接管或缺失跳过语义，不会提前显示被动入口。宿主需配合 `PaywallScreen` 或等价的内部加载、关闭和重试界面。
+
+## 查询缓存与冷启动
+
+查询入口按点位恢复已校验的完整配置及 H5 资源包。已有缓存的点位直接使用本地版本，不等待归因、国家、配置接口或页面下载；价格、资格与权益仍在会话中按当前商店确认。当前进程固定该点位版本，重复打开不切换。
+
+每个 Client 只进行一次后台查询。缺失或损坏的点位沿用现有加载及兜底规则，并可使用本次查询补齐；已有点位的新配置、展示方式及资源仅提交到下次启动索引，当前兜底包和预加载身份不会随后台完成改变。明确 `matched=false` 只撤销下次启动缓存，业务响应或页面包失败保留旧版本。后台过程不弹状态提示。
+
+快照按环境、接口、应用版本、设备及语言隔离，并保存各点位原始请求身份；渠道或国家改变时仍先使用旧匹配结果，新条件用于后台查询。资源完整校验后原子提交，活跃资源租约与下次启动索引共同保护文件。旧 v2 缓存只在当前完整请求身份匹配且已有完整资源时迁移，不扫描猜测其他请求的缓存。
+
+### 宿主接管加载 UI
+
+在展示树根部调用 `.onPaywallLoadingChange { state in ... }`，SDK 即停止绘制该树的默认加载 UI，只提供 `PaywallLoadingState`：`id` 为阶段标识、`isLoading` 为是否仍在加载、`cancel` 为可用时的主线程取消回调。宿主按标识聚合状态，结束事件只移除同一标识；配置和 H5 准备之间应合并交接，避免闪烁。H5 以 `renderReady` 结束加载，错误、取消及视图移除也会结束对应状态。后台预加载不显示提示；热页命中不进入加载分支。
+
+取消只结束当前展示，已关闭页面不会因后台完成重新弹出；共用查询及缓存更新保持原策略。宿主负责遮罩外观、关闭按钮、前后台窗口生命周期及无障碍。未设置回调的宿主继续使用 SDK 默认加载 UI，公共入口无需迁移。

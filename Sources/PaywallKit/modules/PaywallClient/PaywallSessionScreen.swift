@@ -56,7 +56,8 @@ struct PaywallSessionScreen: View {
         Group {
             switch model.state {
             case .loading:
-                statusView(error: nil)
+                WebPaywallLoadingOverlay(label: copy.loading, closeLabel: copy.close,
+                                         canDismiss: canDismiss(), onClose: close)
             case let .failed(message):
                 statusView(error: message)
             case let .ready(session):
@@ -66,6 +67,7 @@ struct PaywallSessionScreen: View {
         .preference(key: PaywallContentHeightKey.self, value: contentHeight)
         .interactiveDismissDisabled(!canDismiss() || resolvedPlacement?.presentation == .halfSheetLocked)
         .task(id: retryGeneration) {
+            if isPresented { client.prioritizePresentation(placement) }
             await model.load(client: client, placement: placement, resolved: resolvedPlacement,
                              cacheIdentity: cacheIdentity, prepared: retryGeneration == 0 ? preparedPage : nil,
                              prepare: prepare, onEvent: onEvent)
@@ -119,7 +121,7 @@ struct PaywallSessionScreen: View {
                         #endif
                         retryButton
                     } else {
-                        ProgressView(copy.loading)
+                        ProgressView().accessibilityLabel(copy.loading)
                     }
                     Button(copy.close, action: close).disabled(!canDismiss())
                 }

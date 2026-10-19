@@ -1,6 +1,6 @@
 import Foundation
 
-/// 服务端只下发点位与页面地址；商品目录与版本必须来自对应完整页面包。
+/// 服务端只下发点位与页面地址；每个点位独立保留自己的完整页面身份。
 struct PaywallQueryResponse: Decodable {
     struct Position: Decodable {
         let positionKey: String
@@ -8,53 +8,178 @@ struct PaywallQueryResponse: Decodable {
         let h5Url: String?
         let displayModeKey: String?
     }
+    struct Page {
+        let placement: String
+        let document: WebPaywallDocument
+        let presentation: WebPaywallConfiguration.Presentation
+        let resource: WebPaywallResourceLease
+    }
+    struct Batch {
+        let pages: [Page]
+        let unmatched: Set<String>
+    }
     let code: String
     let data: [Position]?
 
-    /// 逐页完成包与商品校验，全部成功后再交给 SDK 原子更新配置。
+    private struct PackageRequest {
+        let url: URL
+        var targets: [(placement: String, presentation: WebPaywallConfiguration.Presentation)]
+    }
+
+    /// 两个工作者共用队列，点击点位优先占用下一个空闲下载槽。
+    @MainActor
+    private final class DownloadQueue {
+        var pending: [PackageRequest]
+        var completed = 0
+        var inFlight = 0
+        let preferredPlacement: @MainActor () -> String?
+
+        init(_ pending: [PackageRequest], preferredPlacement: @escaping @MainActor () -> String?) {
+            self.pending = pending
+            self.preferredPlacement = preferredPlacement
+        }
+
+        /// 已开始的包继续完成；优先级变化只调整尚未开始的任务。
+        func next() -> PackageRequest? {
+            guard !pending.isEmpty, completed + inFlight < 8 else { return nil }
+            let preferred = preferredPlacement()
+            let index = pending.firstIndex { request in
+                request.targets.contains { $0.placement == preferred }
+            } ?? 0
+            inFlight += 1
+            return pending.remove(at: index)
+        }
+    }
+
+    /// 先通知响应中不可用的点位，再并发下载并逐个提交完整包。
+    @MainActor
+    static func load(_ bytes: Data, configuration: PaywallQueryConfiguration,
+                     catalog: PaywallCatalog, maximumConcurrentPackages: Int = 1,
+                     preferredPlacement: @escaping @MainActor () -> String? = { nil },
+                     onUnavailable: (@MainActor (Set<String>) -> Void)? = nil,
+                     onPage: (@MainActor (Page) async throws -> Void)? = nil) async throws -> Batch {
+        let response = try JSONDecoder().decode(Self.self, from: bytes)
+        guard response.code == "200", let positions = response.data, positions.count <= 100 else {
+            throw WebPaywallError.invalidDocument
+        }
+        let selection = packageRequests(positions, configuration: configuration)
+        try Task.checkCancellation()
+        // 未返回、未命中或无法形成下载任务的点位，不等待其他页面资源。
+        let pendingPlacements = Set(selection.packages.flatMap { $0.targets.map { $0.placement } })
+        onUnavailable?(Set(configuration.placements.values).subtracting(pendingPlacements))
+        // 通知只结束对应入口的等待，已命中的包继续共用原下载队列。
+        let queue = DownloadQueue(selection.packages, preferredPlacement: preferredPlacement)
+        let pages = try await withThrowingTaskGroup(of: [Page].self) { group in
+            for _ in 0..<min(2, max(1, maximumConcurrentPackages)) {
+                group.addTask { @MainActor in
+                    try await drain(queue, configuration: configuration, catalog: catalog, onPage: onPage)
+                }
+            }
+            var pages: [Page] = []
+            for try await result in group { pages.append(contentsOf: result) }
+            return pages
+        }
+        return Batch(pages: pages, unmatched: selection.unmatched)
+    }
+
+    /// 单包失败只跳过关联点位，成功立即通知等待该点位的展示。
+    @MainActor
+    private static func drain(_ queue: DownloadQueue, configuration: PaywallQueryConfiguration,
+                              catalog: PaywallCatalog,
+                              onPage: (@MainActor (Page) async throws -> Void)?) async throws -> [Page] {
+        var pages: [Page] = []
+        while let request = queue.next() {
+            try Task.checkCancellation()
+            let package: (WebPaywallDocument, WebPaywallResourceLease)
+            do {
+                package = try await WebPaywallPackageLoader.prepare(
+                    pageURL: request.url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
+                    allowedOrigins: configuration.allowedOrigins, catalog: catalog,
+                    developmentHTTPOrigin: configuration.developmentHTTPOrigin)
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                queue.inFlight -= 1
+                try Task.checkCancellation()
+                for target in request.targets {
+                    WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue,
+                        "query.page_skipped", "placement=\(target.placement) error=\(error)")
+                }
+                continue
+            }
+            // MainActor 串行领取成功额度，并发完成也不会超过八个包。
+            queue.inFlight -= 1
+            queue.completed += 1
+            for target in request.targets {
+                try Task.checkCancellation()
+                let page = Page(placement: target.placement, document: package.0,
+                                presentation: target.presentation, resource: package.1)
+                try await onPage?(page)
+                pages.append(page)
+            }
+        }
+        return pages
+    }
+
+    /// 按首次出现顺序合并相同 URL，保留点位去重及各自展示方式。
+    private static func packageRequests(_ positions: [Position], configuration: PaywallQueryConfiguration)
+        -> (packages: [PackageRequest], unmatched: Set<String>) {
+        var packages: [PackageRequest] = []
+        var indices: [URL: Int] = [:]
+        var unmatched: Set<String> = []
+        var seen: Set<String> = []
+        for position in positions {
+            guard let placement = configuration.placements[position.positionKey],
+                  seen.insert(placement).inserted else { continue }
+            if !position.matched { unmatched.insert(placement); continue }
+            guard let address = position.h5Url, let url = URL(string: address) else { continue }
+            let presentation = position.displayModeKey
+                .flatMap(WebPaywallConfiguration.Presentation.init(rawValue:)) ?? .fullScreen
+            // 一个包下载完成时，其后的同 URL 点位也立即获得独立提交机会。
+            if let index = indices[url] {
+                packages[index].targets.append((placement, presentation))
+            } else {
+                indices[url] = packages.count
+                packages.append(PackageRequest(url: url, targets: [(placement, presentation)]))
+            }
+        }
+        return (packages, unmatched)
+    }
+
+    /// 兼容通用配置适配入口，查询运行时直接消费独立点位批次。
     @MainActor
     static func transform(_ bytes: Data, configuration: PaywallQueryConfiguration,
                           catalog: PaywallCatalog) async throws -> Data {
-        let response = try JSONDecoder().decode(Self.self, from: bytes)
-        guard response.code == "200", let positions = response.data, !positions.isEmpty, positions.count <= 100 else {
-            throw WebPaywallError.invalidDocument
-        }
+        let batch = try await load(bytes, configuration: configuration, catalog: catalog)
         var placements: [String: String] = [:]
         var presentations: [String: String] = [:]
         var paywalls: [String: [String: Any]] = [:]
-        var loaded: [URL: WebPaywallDocument] = [:]
-        for position in positions where position.matched {
-            guard let placement = configuration.placements[position.positionKey] else { continue }
-            guard placements[placement] == nil,
-                  let address = position.h5Url, let url = URL(string: address),
-                  let mode = position.displayModeKey,
-                  WebPaywallConfiguration.Presentation(rawValue: mode) != nil else {
-                throw WebPaywallError.invalidDocument
-            }
-            let document: WebPaywallDocument
-            if let existing = loaded[url] { document = existing }
-            else {
-                document = try await WebPaywallPackageLoader.load(
-                    pageURL: url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
-                    allowedOrigins: configuration.allowedOrigins,
-                    catalog: catalog, developmentHTTPOrigin: configuration.developmentHTTPOrigin)
-                loaded[url] = document
-            }
-            try Task.checkCancellation()
+        for page in batch.pages {
+            let document = page.document
             if let existing = paywalls[document.documentId], existing["pageUrl"] as? String != document.pageURL.absoluteString {
-                throw WebPaywallError.invalidDocument
+                continue
             }
-            placements[placement] = document.documentId
-            presentations[placement] = mode
+            placements[page.placement] = document.documentId
+            presentations[page.placement] = page.presentation.rawValue
             paywalls[document.documentId] = payload(document)
         }
-        return try JSONSerialization.data(withJSONObject: [
-            "version": 1, "placements": placements, "presentations": presentations,
-            "paywalls": paywalls, "preload": [], "sessions": [:]
-        ], options: .sortedKeys)
+        return try configurationData(placements: placements, presentations: presentations, paywalls: paywalls)
     }
 
-    /// 将经过完整包校验的文档转换为 SDK 通用清单，不使用接口中的空商品字段。
+    /// 单点位配置独立序列化，允许同文档在不同点位绑定不同版本或发布地址。
+    static func configurationData(placement: String, document: WebPaywallDocument,
+                                  presentation: WebPaywallConfiguration.Presentation) throws -> Data {
+        try configurationData(placements: [placement: document.documentId],
+            presentations: [placement: presentation.rawValue], paywalls: [document.documentId: payload(document)])
+    }
+
+    /// 所有持久化配置继续使用现有校验协议，不缓存任何动态商品报价。
+    private static func configurationData(placements: [String: String], presentations: [String: String],
+                                          paywalls: [String: [String: Any]]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["version": 1, "placements": placements,
+            "presentations": presentations, "paywalls": paywalls, "preload": [], "sessions": [:]], options: .sortedKeys)
+    }
+
+    /// 商品与版本来自完整包清单，接口中的展示字段不得伪造交易绑定。
     private static func payload(_ document: WebPaywallDocument) -> [String: Any] {
         ["kind": "web-paywall", "bridgeVersion": 2, "documentId": document.documentId,
          "revision": document.revision ?? 0, "pageUrl": document.pageURL.absoluteString,

@@ -53,7 +53,7 @@ struct WebPaywallContainer: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        let webView = WebPaywallDiagnosticWebView(frame: .zero, configuration: configuration)
+        let webView = WebPaywallWebViewFactory.make(configuration: configuration)
         webView.diagnosticEnvironment = environment.runtimeEnvironment.rawValue
         // 内容自适应 Sheet 保留系统表面，不用 WebView 默认白底遮挡。
         if onContentHeightChange != nil {

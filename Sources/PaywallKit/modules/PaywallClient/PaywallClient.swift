@@ -5,6 +5,7 @@ import Foundation
 public final class PaywallClient {
     private struct CachedPage {
         let identity: AnyHashable
+        let custom: [String: WebPaywallJSONValue]
         let cache: WebPaywallWebViewCache
     }
 
@@ -24,11 +25,18 @@ public final class PaywallClient {
     func recordSuccess(_ selected: PaywallPlacement, document: WebPaywallDocument, environment: String) async {
         guard previousVersionPlacements.contains(selected.name),
               let snapshot = selected.historySnapshot, snapshot.environment == environment,
-              selected.document.localReadAccessURL == nil, !isPlacementDisabled(selected.name),
-              let rendered = try? WebPaywallPackage.identity(document),
-              let configured = try? WebPaywallPackage.identity(selected.document), rendered == configured else { return }
+              !isPlacementDisabled(selected.name) else { return }
+        let remote = selected.remoteDocument ?? selected.document
+        guard let configured = try? WebPaywallPackage.identity(remote),
+              document.productRefs == selected.document.productRefs,
+              document.documentId == remote.documentId, document.revision == remote.revision else { return }
+        if document.localReadAccessURL == nil {
+            guard let rendered = try? WebPaywallPackage.identity(document), rendered == configured else { return }
+        }
+        // 本地查询快照仍按原请求及远端文档归档，不能把 file URL 当成发布身份。
         do {
-            try await history.record(snapshot, placement: selected.name, document: selected.document)
+            try await history.record(snapshot, placement: selected.name, document: remote,
+                                     packageDirectory: document.localReadAccessURL)
         } catch is CancellationError { return }
         catch { WebPaywallDiagnostics.log(environment, "history.record_failed", "placement=\(selected.name)") }
     }
@@ -55,18 +63,26 @@ public final class PaywallClient {
             $0.placement == placement || $0.fallbackPlacements.contains(placement) ? $0 : nil
         }
         return PaywallFallbackContext(placement: placement, store: store,
-                                      usesPreviousVersion: previousVersionPlacements.contains(placement))
+            usesPreviousVersion: previousVersionPlacements.contains(placement),
+            startsLocally: queryRuntime?.cachedPlacement(placement) == nil,
+            cachedFallback: queryRuntime?.fallbackAtLaunch)
     }
 
-    /// 展示解析覆盖配置阶段超时；本地入口完全绕过远端请求。
+    /// 可见展示优先排队下载，普通预加载不改变优先级。
+    func prioritizePresentation(_ placement: String) {
+        queryRuntime?.prioritize(placement)
+    }
+
+    /// 展示解析等待点位完整缓存结果，不施加首屏期限；本地入口完全绕过远端请求。
     func resolveForPresentation(_ placement: String, context: PaywallFallbackContext) async throws -> PaywallPlacement {
         if isPlacementDisabled(placement) { throw PaywallFailure.disabled }
         if context.local { return try context.localPlacement(clientID: id) }
         do {
-            let selected = try await PaywallDeadline<PaywallPlacement?>().run(until: context.deadline) {
-                try await self.resolve(placement)
-            }
-            guard var selected else { throw PaywallFailure.missingPlacement }
+            // 缺失点位等待共享查询提交完整缓存或明确结束，关闭当前入口仍可取消等待。
+            guard var selected = try await resolve(placement) else { throw PaywallFailure.missingPlacement }
+            try Task.checkCancellation()
+            // 配置等待不消耗商品与网页的准备期限，本次容器仍沿用打开时冻结的形态。
+            context.beginPreparation()
             context.capture(selected)
             context.record(selected.document)
             selected.fallbackContext = context
@@ -85,9 +101,9 @@ public final class PaywallClient {
     private var cachedConfiguration: WebPaywallConfiguration?
     private var configurationGeneration = UUID()
     private var configurationTask: Task<WebPaywallConfiguration, Error>?
-    private var pages: [String: CachedPage] = [:]
+    private var pages: [String: [CachedPage]] = [:]
 
-    var hasConfiguration: Bool { cachedConfiguration != nil }
+    var hasConfiguration: Bool { queryRuntime?.hasConfiguration ?? (cachedConfiguration != nil) }
 
     public init(configuration: PaywallConfigurationSource, retainedPlacements: Set<String> = []) {
         source = configuration
@@ -97,6 +113,7 @@ public final class PaywallClient {
     /// 查询接口入口内置设备条件、归因等待、响应转换及包更新，保留原 GET 接入。
     public convenience init(query: PaywallQueryConfiguration, catalog: @escaping () -> PaywallCatalog,
                             retainedPlacements: Set<String> = []) {
+        PaywallCacheMaintenance.prepareQueryClient()
         let runtime = PaywallQueryRuntime(configuration: query, catalog: catalog)
         self.init(configuration: runtime.source(), retainedPlacements: retainedPlacements)
         queryRuntime = runtime
@@ -129,19 +146,22 @@ public final class PaywallClient {
         self.init(configuration: source, retainedPlacements: retainedPlacements)
     }
 
-    /// 启动预取与展示入口共享请求；成功冻结到当前 Client，失败允许下一次主动重试。
+    /// 查询入口先恢复点位缓存再静默更新；无缓存时继续等待唯一查询。
     public func prepare() async throws {
+        if let queryRuntime { try await queryRuntime.prepare(); return }
         _ = try await configuration()
     }
 
-    /// 后台更新后刷新配置开关，不改变已冻结的展示输入。
+    /// 自定义来源可主动刷新；查询入口始终复用首次成功或失败结果。
     public func refresh() async throws {
-        if configurationTask == nil { cachedConfiguration = nil }
+        if let queryRuntime { try await queryRuntime.prepare(); return }
+        if queryRuntime == nil, configurationTask == nil { cachedConfiguration = nil }
         _ = try await configuration()
     }
 
-    /// 使后续解析重新读取请求条件；已展示页面仍持有自己的不可变快照。
+    /// 仅自定义来源允许失效；查询入口的首次条件与结果保持到 Client 释放。
     public func invalidateConfiguration() {
+        guard queryRuntime == nil else { return }
         configurationGeneration = UUID()
         configurationTask?.cancel()
         configurationTask = nil
@@ -150,6 +170,10 @@ public final class PaywallClient {
 
     /// 一次返回点位的页面与展示方式；缺失点位交给调用方决定跳过或报错。
     public func resolve(_ placement: String) async throws -> PaywallPlacement? {
+        if let queryRuntime {
+            guard !isPlacementDisabled(placement) else { throw PaywallFailure.disabled }
+            return try await queryRuntime.resolve(placement)
+        }
         let configuration = try await configuration()
         try Task.checkCancellation()
         if configuration.disabledPlacements.contains(placement) || localPackages?.isDisabled(placement) == true { throw PaywallFailure.disabled }
@@ -158,22 +182,38 @@ public final class PaywallClient {
 
     /// 已缓存配置可同步解析，重复打开不先展示配置加载界面。
     public func cachedPlacement(_ placement: String) -> PaywallPlacement? {
+        if let queryRuntime {
+            return isPlacementDisabled(placement) ? nil : queryRuntime.cachedPlacement(placement)
+        }
         guard let cachedConfiguration, !isPlacementDisabled(placement) else { return nil }
         return resolved(placement, configuration: cachedConfiguration)
     }
 
     /// 显式重试或业务目录失效时释放旧页，已挂载页面由底层在卸载时销毁。
     public func invalidatePage(for placement: String) {
-        pages.removeValue(forKey: placement)?.cache.destroy()
+        pages.removeValue(forKey: placement)?.forEach { $0.cache.destroy() }
     }
 
-    /// 按宿主提供的商品/价格/权益身份复用网页，页面版本再由底层缓存键核对。
-    func pageCache(for placement: String, identity: AnyHashable) -> WebPaywallWebViewCache? {
+    /// 按业务身份和 custom 分别保留入口网页，避免同一点位的不同展示参数相互清除。
+    func pageCache(for placement: String, identity: AnyHashable,
+                   custom: [String: WebPaywallJSONValue]) -> WebPaywallWebViewCache? {
         guard retainedPlacements.contains(placement) else { return nil }
-        if let entry = pages[placement], entry.identity == identity { return entry.cache }
-        invalidatePage(for: placement)
+        // 商品、价格或权益变化时整体失效，不能保留其他入口的旧交易页面。
+        if let first = pages[placement]?.first, first.identity != identity {
+            invalidatePage(for: placement)
+        }
+        var variants = pages[placement] ?? []
+        if let index = variants.firstIndex(where: { $0.custom == custom }) {
+            let entry = variants.remove(at: index)
+            variants.append(entry)
+            pages[placement] = variants
+            return entry.cache
+        }
+        // 每个点位最多保留四种上下文；被淘汰的挂载页仍按原规则延迟销毁。
+        if variants.count >= 4 { variants.removeFirst().cache.destroy() }
         let cache = WebPaywallWebViewCache(retentionPolicy: .keepAfterDismissal)
-        pages[placement] = CachedPage(identity: identity, cache: cache)
+        variants.append(CachedPage(identity: identity, custom: custom, cache: cache))
+        pages[placement] = variants
         return cache
     }
 
@@ -181,8 +221,8 @@ public final class PaywallClient {
     func preparedCachedPage(for placement: String, identity: AnyHashable,
                             resolved: PaywallPlacement?,
                             prepare: (WebPaywallDocument) throws -> PaywallSessionInput) -> PaywallPreparedPage? {
-        guard !isPlacementDisabled(placement), let entry = pages[placement],
-              entry.identity == identity else { return nil }
+        guard !isPlacementDisabled(placement), let variants = pages[placement],
+              variants.first?.identity == identity else { return nil }
         // 优先使用宿主已冻结的版本；无宿主时本地点位直接读取本地包，不依赖远端配置。
         let context = makeFallbackContext(placement)
         let selected: PaywallPlacement?
@@ -193,7 +233,8 @@ public final class PaywallClient {
         } else {
             selected = cachedPlacement(placement)
         }
-        guard let selected, let input = try? prepare(selected.document) else { return nil }
+        guard let selected, let input = try? prepare(selected.document),
+              let entry = variants.first(where: { $0.custom == input.custom }) else { return nil }
         // 环境、custom、商品绑定和首屏回执仍由底层精确核对。
         let page = PaywallPreparedPage(placement: selected, input: input, cache: entry.cache)
         WebPaywallDiagnostics.log(input.environment.runtimeEnvironment.rawValue, "cache.readiness",
@@ -201,7 +242,7 @@ public final class PaywallClient {
         return page.isReady ? page : nil
     }
 
-    /// 独立共享任务不随单个页面关闭而取消，失败任务及时移除，避免重试永久复用错误。
+    /// 独立任务不随单个页面关闭而取消；查询入口的失败立即交给已有兜底。
     private func configuration() async throws -> WebPaywallConfiguration {
         while true {
             try Task.checkCancellation()
@@ -218,16 +259,18 @@ public final class PaywallClient {
         }
     }
 
-    /// 合并预取与刷新请求，并阻止过期任务清理新任务或写回旧配置。
+    /// 查询入口保留首次任务的成功或失败结果，后续入口不得再次访问配置接口。
     private func loadConfiguration() async throws -> WebPaywallConfiguration {
         let generation = configurationGeneration
         let task = Task { [self] in
-            defer { if generation == configurationGeneration { configurationTask = nil } }
+            // 查询失败也保留任务结果；普通自定义来源仍允许主动重试。
+            defer {
+                if queryRuntime == nil, generation == configurationGeneration { configurationTask = nil }
+            }
             let value = try await source.load()
             try Task.checkCancellation()
             guard generation == configurationGeneration else { throw CancellationError() }
             cachedConfiguration = value
-            queryRuntime?.didLoad(value)
             return value
         }
         configurationTask = task

@@ -25,11 +25,18 @@ actor PaywallHistoryStore {
 
     /// 首屏成功且资源完整才提交记录；中途取消保留原来的成功版本。
     func record(_ snapshot: PaywallHistorySnapshot, placement: String,
-                document: WebPaywallDocument) async throws {
+                document: WebPaywallDocument, packageDirectory: URL? = nil) async throws {
         guard document.localReadAccessURL == nil else { return }
         let identity = try WebPaywallPackage.identity(document)
-        let resource = try await WebPaywallResourceCache.shared.cachedPackage(
-            document: document, environment: snapshot.environment)
+        // 查询快照来自独立缓存目录；普通页面继续只读取已下载完成的共享资源。
+        let resource: WebPaywallResourceLease
+        if let packageDirectory {
+            try WebPaywallPackage.verify(packageDirectory, identity: identity, environment: snapshot.environment)
+            resource = WebPaywallResourceLease(directory: packageDirectory, release: {})
+        } else {
+            resource = try await WebPaywallResourceCache.shared.cachedPackage(
+                document: document, environment: snapshot.environment)
+        }
         try Task.checkCancellation()
         let group = snapshot.key(placement: placement, documentID: identity.documentId)
         let directory = try prepareDirectory(group)

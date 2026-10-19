@@ -171,21 +171,42 @@ public actor WebPaywallResourceCache {
         let deadline = Date().addingTimeInterval(timeout)
         let data = try await fetch(base.appendingPathComponent("package.json"), 256_000, deadline)
         let package = try WebPaywallPackage.parse(data, identity: identity, environment: environment)
-        // 逐文件验证，不允许部分成功的包进入正式目录。
-        for file in package.files {
-            let bytes = try await fetch(base.appendingPathComponent(file.path), file.size, deadline)
-            guard bytes.count == file.size, WebPaywallPackage.digest(bytes) == file.sha256 else {
-                throw WebPaywallError.invalidDocument
-            }
-            let target = temporary.appendingPathComponent(file.path)
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try bytes.write(to: target)
-        }
+        // 包内并发下载仍逐项校验，失败时任务组先停止，随后清理临时目录。
+        try await downloadFiles(package.files, base: base, directory: temporary, deadline: deadline)
+        try Task.checkCancellation()
         try data.write(to: temporary.appendingPathComponent("package.json"))
         try fm.moveItem(at: temporary, to: destination)
         WebPaywallDiagnostics.log(environment, "resource.download_ready", "key=\(destination.lastPathComponent) files=\(package.files.count)")
         prune(limit: capacity)
         return destination
+    }
+
+    /// 最多四个资源请求并行，所有文件成功后才允许上层原子提交。
+    private func downloadFiles(_ files: [WebPaywallPackage.File], base: URL,
+                               directory: URL, deadline: Date) async throws {
+        let fetch = self.fetch
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            var next = 0
+            func enqueue(_ file: WebPaywallPackage.File) {
+                group.addTask {
+                    try Task.checkCancellation()
+                    let bytes = try await fetch(base.appendingPathComponent(file.path), file.size, deadline)
+                    guard bytes.count == file.size, WebPaywallPackage.digest(bytes) == file.sha256 else {
+                        throw WebPaywallError.invalidDocument
+                    }
+                    try Task.checkCancellation()
+                    let target = directory.appendingPathComponent(file.path)
+                    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(),
+                                                            withIntermediateDirectories: true)
+                    try bytes.write(to: target)
+                }
+            }
+            while next < min(4, files.count) { enqueue(files[next]); next += 1 }
+            while try await group.next() != nil {
+                try Task.checkCancellation()
+                if next < files.count { enqueue(files[next]); next += 1 }
+            }
+        }
     }
 
     /// 每次命中检查完整文件集，拒绝链接逃逸和磁盘损坏。

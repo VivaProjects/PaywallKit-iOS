@@ -74,6 +74,13 @@ public struct PaywallConfigurationSource {
         }
     }
 
+    /// 查询迁移仅按已构造的确切请求读取副本，不访问网络或转换页面元数据。
+    func cachedConfiguration(for request: URLRequest) throws -> WebPaywallConfiguration? {
+        let key = "paywall.configuration.v2.\(namespace).\(requestIdentity(request))"
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try snapshot(data, request: request, environment: runtimeEnvironment ?? "", catalogs: catalogs())
+    }
+
     /// 网络返回先完成宿主转换，业务错误和半包不会进入配置缓存。
     private func fetch(_ request: URLRequest, environment: String) async throws -> Data {
         // 原始 HTTP 返回在转换与校验之前记录，业务错误也能定位。

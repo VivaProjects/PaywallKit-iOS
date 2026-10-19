@@ -6,6 +6,14 @@ public enum WebPaywallPackageLoader {
     public static func load(pageURL: URL, runtimeEnvironment: String,
                             allowedOrigins: Set<String>?, catalog: PaywallCatalog,
                             developmentHTTPOrigin: String? = nil) async throws -> WebPaywallDocument {
+        try await prepare(pageURL: pageURL, runtimeEnvironment: runtimeEnvironment, allowedOrigins: allowedOrigins,
+                          catalog: catalog, developmentHTTPOrigin: developmentHTTPOrigin).0
+    }
+
+    /// 查询更新持有完整包租约直到归档完成，其他下载不能在提交前淘汰资源。
+    static func prepare(pageURL: URL, runtimeEnvironment: String,
+                        allowedOrigins: Set<String>?, catalog: PaywallCatalog,
+                        developmentHTTPOrigin: String? = nil) async throws -> (WebPaywallDocument, WebPaywallResourceLease) {
         #if DEBUG
         let localOrigin = runtimeEnvironment == "test" ? developmentHTTPOrigin : nil
         #else
@@ -36,6 +44,6 @@ public enum WebPaywallPackageLoader {
         try Task.checkCancellation()
         _ = try WebPaywallDocument(packageDirectory: lease.readAccessURL, identity: identity,
                                   environment: runtimeEnvironment, catalog: catalog)
-        return document
+        return (document, lease)
     }
 }
