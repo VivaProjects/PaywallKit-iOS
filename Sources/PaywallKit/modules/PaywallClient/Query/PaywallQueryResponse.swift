@@ -142,6 +142,9 @@ struct PaywallQueryResponse: Decodable {
                 packages.append(PackageRequest(url: url, targets: [(placement, presentation)]))
             }
         }
+        // 有效响应是本轮完整点位集合；未返回的点位撤销下次启动缓存。
+        // 已返回但地址无效或下载失败仍保留旧缓存，本次启动快照由运行时保持不变。
+        unmatched.formUnion(Set(configuration.placements.values).subtracting(seen))
         return (packages, unmatched)
     }
 
