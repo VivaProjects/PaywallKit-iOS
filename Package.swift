@@ -5,5 +5,8 @@ let package = Package(
     name: "PaywallKit",
     platforms: [.iOS(.v16)],
     products: [.library(name: "PaywallKit", targets: ["PaywallKit"])],
-    targets: [.target(name: "PaywallKit", resources: [.process("Resources")])]
+    targets: [
+        .target(name: "PaywallKit", resources: [.process("Resources")]),
+        .testTarget(name: "PaywallKitTests", dependencies: ["PaywallKit"])
+    ]
 )
