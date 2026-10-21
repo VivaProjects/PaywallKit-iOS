@@ -14,6 +14,7 @@ struct WebPaywallContainer: UIViewRepresentable {
     let isPresented: Bool
     let onContentHeightChange: ((CGFloat) -> Void)?
     let onReady: () -> Void
+    let onReadyProducts: (([String]) -> Void)?
     let onFailure: () -> Void
     let onTypedFailure: ((PaywallFailure) -> Void)?
     let onResourceSource: ((String) -> Void)?
@@ -44,7 +45,7 @@ struct WebPaywallContainer: UIViewRepresentable {
             context.coordinator.setPresentationActive(isPresented)
             context.coordinator.attach(host: host, onReady: onReady, onFailure: onFailure,
                                        onContentHeightChange: onContentHeightChange, onTypedFailure: onTypedFailure,
-                                       onResourceSource: onResourceSource)
+                                       onResourceSource: onResourceSource, onReadyProducts: onReadyProducts)
             context.coordinator.beginPresentationDeadline()
             return WebPaywallViewportView(webView: cached, sheetLayoutID: sheetLayoutID)
         }
@@ -67,7 +68,7 @@ struct WebPaywallContainer: UIViewRepresentable {
         webView.scrollView.pinchGestureRecognizer?.isEnabled = false
         context.coordinator.attach(host: host, onReady: onReady, onFailure: onFailure,
                                        onContentHeightChange: onContentHeightChange, onTypedFailure: onTypedFailure,
-                                       onResourceSource: onResourceSource)
+                                       onResourceSource: onResourceSource, onReadyProducts: onReadyProducts)
         webViewCache?.store(webView, coordinator: context.coordinator,
                             document: document, storefrontGroup: storefrontGroup,
                             environment: environment, custom: custom)

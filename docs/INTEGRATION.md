@@ -155,3 +155,7 @@ iOS 默认仅在 `runtimeEnvironment: test` 时输出日志，与 Debug/Release 
 ### 空商品展示与交易权限（0.1.5）
 
 `requiresStoreProducts` 只控制页面是否必须取得商品才能完成 bootstrap。`allowsStoreActions` 独立控制购买与恢复，默认沿用 `requiresStoreProducts`，保持旧纯展示桥禁用交易。允许空商品展示但仍提供购买的宿主，应设置 `requiresStoreProducts = false`、`allowsStoreActions = true`；购买仍必须命中本次商店返回的商品。高层会话包装桥透传两项权限，被拒绝的交易动作回传 failed，避免网页停留在等待态。桥消息格式不变。
+
+### iOS 曝光商品口径
+
+`PaywallSessionEvent.ready(productRefs:)` 返回本次 H5 `productsRequest` 中通过校验的商品 ID，保留请求顺序，包括商店未返回的商品；不返回文档完整绑定或商店可售结果。预加载和热页复用保留同一 WebView 会话的请求列表。旧 H5 未声明 `productRequest` 能力时返回空数组，不用发布清单补齐。底层接入可使用 `WebPaywallView.onReadyProducts` 获取同一列表，原 `onReady` 回调保持兼容。此改动不改变 H5/Flutter 的桥消息协议。

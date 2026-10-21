@@ -1,5 +1,9 @@
 # iOS SDK 变更记录
 
+## [0.2.1] - 2026-10-21
+
+- 付费墙 ready 事件透传 H5 productsRequest 的商品 ID，保留预加载与热页请求列表；旧页无显式请求时返回空列表。
+
 ## [0.2.0] - 2026-10-21
 
 - 新增线程安全的 `PaywallLogging.mode`，支持 automatic / enabled / disabled；可在 production 环境独立开启生命周期、查询和配置请求响应日志，不改变业务环境。

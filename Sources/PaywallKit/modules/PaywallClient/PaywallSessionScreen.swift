@@ -92,7 +92,6 @@ struct PaywallSessionScreen: View {
             webViewCache: session.cache,
             preparationDeadline: model.deadline, isPresented: isPresented,
             onContentHeightChange: { contentHeight = $0 },
-            onReady: { model.ready(session: session, client: client, onEvent: onEvent) },
             onFailure: { failure in
                 guard canDismiss() else { model.fail(failure.rawValue, onEvent: onEvent); return }
                 recoveryTask?.cancel()
@@ -101,7 +100,10 @@ struct PaywallSessionScreen: View {
                                         cacheIdentity: cacheIdentity, prepare: prepare, onEvent: onEvent)
                 }
             },
-            onResourceSource: { model.resourceSource($0, session: session) }
+            onResourceSource: { model.resourceSource($0, session: session) },
+            onReadyProducts: { references in
+                model.ready(session: session, productRefs: references, client: client, onEvent: onEvent)
+            }
         ) {
             statusView(error: copy.unavailable)
         }

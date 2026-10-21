@@ -13,6 +13,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     private var onContentHeightChange: ((CGFloat) -> Void)?
     private(set) var contentHeight: CGFloat?
     private var onReady: (() -> Void)?
+    private var onReadyProducts: (([String]) -> Void)?
     private var onFailure: (() -> Void)?
     private var onTypedFailure: ((PaywallFailure) -> Void)?
     private var queryingProducts = false
@@ -53,6 +54,11 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     var allowsActions = true
     var requiresRenderReady = false
 
+    /// 只曝光 H5 显式请求的商品，旧页隐式查询不冒充 H5 请求。
+    private var exposureProductRefs: [String] {
+        expectsProductRequest ? requestedProductRefs ?? [] : []
+    }
+
     var isReady: Bool { active && rendered }
     var isReusable: Bool { active && webView != nil }
 
@@ -70,10 +76,12 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
                 onFailure: @escaping () -> Void,
                 onContentHeightChange: ((CGFloat) -> Void)? = nil,
                 onTypedFailure: ((PaywallFailure) -> Void)? = nil,
-                onResourceSource: ((String) -> Void)? = nil) {
+                onResourceSource: ((String) -> Void)? = nil,
+                onReadyProducts: (([String]) -> Void)? = nil) {
         self.onContentHeightChange = onContentHeightChange
         self.host = host
         self.onReady = onReady
+        self.onReadyProducts = onReadyProducts
         self.onFailure = onFailure
         self.onTypedFailure = onTypedFailure
         self.onResourceSource = onResourceSource
@@ -84,6 +92,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         if rendered {
             DispatchQueue.main.async { [weak self] in
                 if let self { self.onResourceSource?(self.resourceSource) }
+                // 热页复用原会话的请求清单，不重新使用发布清单推导商品。
+                if let self { self.onReadyProducts?(self.exposureProductRefs) }
                 self?.onReady?()
                 if let height = self?.contentHeight { self?.onContentHeightChange?(height) }
             }
@@ -110,6 +120,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         host = nil
         onContentHeightChange = nil
         onReady = nil
+        onReadyProducts = nil
         onFailure = nil
         onTypedFailure = nil
         onResourceSource = nil
@@ -388,6 +399,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         trace("render.ready")
         rendered = true
         deadlineTask?.cancel()
+        // 请求口径包含商店未返回的商品，不能替换为可售商品结果。
+        onReadyProducts?(exposureProductRefs)
         onReady?()
         notifyPresentationWhenReady()
     }
