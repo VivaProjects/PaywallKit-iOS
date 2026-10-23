@@ -73,13 +73,13 @@ public final class PaywallClient {
         queryRuntime?.prioritize(placement)
     }
 
-    /// 展示解析等待点位完整缓存结果，不施加首屏期限；本地入口完全绕过远端请求。
+    /// 查询模式展示最多等待三秒，超时沿用本地兜底；共享后台更新继续运行。
     func resolveForPresentation(_ placement: String, context: PaywallFallbackContext) async throws -> PaywallPlacement {
         if isPlacementDisabled(placement) { throw PaywallFailure.disabled }
         if context.local { return try context.localPlacement(clientID: id) }
         do {
-            // 缺失点位等待共享查询提交完整缓存或明确结束，关闭当前入口仍可取消等待。
-            guard var selected = try await resolve(placement) else { throw PaywallFailure.missingPlacement }
+            // 仅展示等待有期限，普通预加载仍等待共享查询完成。
+            guard var selected = try await resolveForEntry(placement) else { throw PaywallFailure.missingPlacement }
             try Task.checkCancellation()
             // 配置等待不消耗商品与网页的准备期限，本次容器仍沿用打开时冻结的形态。
             context.beginPreparation()
@@ -93,6 +93,13 @@ public final class PaywallClient {
             guard let fallback = try await context.advance(failure, client: self) else { throw failure }
             return fallback
         }
+    }
+
+    /// 可见入口统一限制查询等待；没有本地兜底的点位仍按原策略跳过或报错。
+    func resolveForEntry(_ placement: String) async throws -> PaywallPlacement? {
+        guard !isPlacementDisabled(placement) else { return nil }
+        if let queryRuntime { return try await queryRuntime.resolve(placement, presentation: true) }
+        return try await resolve(placement)
     }
 
     private var queryRuntime: PaywallQueryRuntime?
