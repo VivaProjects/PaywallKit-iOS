@@ -163,4 +163,10 @@ iOS 默认仅在 `runtimeEnvironment: test` 时输出日志，与 Debug/Release 
 
 ## 延迟商品加载（0.2.2）
 
-H5 同时声明 `productRequest`、`renderReady`、`deferredProducts` 时，iOS 在合法 `productsRequest` 后先发送空商品 `bootstrap`，商品查询成功后发送 `productsUpdated`。页面必须在真实商品与披露到达前禁用购买，不得填充演示价格。延迟模式商品查询上限为 12 秒，失败沿用商品不可用处理。未声明该能力的旧页继续等待商品后初始化；Flutter 尚未启用此可选能力，页面仍须兼容带商品的常规 bootstrap。
+H5 同时声明 `productRequest`、`renderReady`、`deferredProducts` 时，iOS 在合法 `productsRequest` 后先发送空商品 `bootstrap`，商品查询成功后发送 `productsUpdated`。页面必须在真实商品与披露到达前禁用购买，不得填充演示价格。延迟模式商品查询上限为 12 秒，失败沿用商品不可用处理。未声明该能力的旧页继续等待商品后初始化；Flutter 1.1.0 起也支持此可选能力，页面仍须兼容旧宿主带商品的常规 bootstrap。
+
+## 0.3.0 设备参数接入
+
+升级依赖到 `0.3.0`。SDK 向 H5 的 `custom` 平铺注入 `os`（`iOS` / `Android`）与 `isPad`（布尔值），POST 查询在 `conditions` 中传同名字段；GET 使用字符串查询参数。设备参数变化后需新建会话。
+
+SwiftPM：`.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.3.0")`。查询式入口自动采集 iOS 与 iPad 状态；会话配置可通过 `WebPaywallEnvironmentConfiguration(os: "iOS", isPad: true)` 显式覆盖。

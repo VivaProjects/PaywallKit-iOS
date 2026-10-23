@@ -23,9 +23,9 @@ python3 tools/version.py tag
 将本仓库配置为真实远端后，可自行推送提交和相应标签。例如当前版本为 0.1.0 时：
 
 ```sh
-git remote add origin <THIS_REPOSITORY_GIT_URL>
+git remote add origin git@github.com:VivaProjects/PaywallKit-iOS.git
 git push -u origin HEAD
 git push origin 0.1.0
 ```
 
-占位 URL 必须替换；已配置 origin 时不要重复添加。两个 SDK 根目录可直接作为 Git 依赖发布，无需再次导出或复制到父仓库。iOS 标准版本标签可供 SwiftPM 解析；Flutter 使用 Git ref 固定版本，当前未启用 pub.dev 发布。没有新增远端，也没有执行推送。
+占位 URL 必须替换；已配置 origin 时不要重复添加。两个 SDK 根目录可直接作为 Git 依赖发布，无需再次导出或复制到父仓库。iOS 标准版本标签可供 SwiftPM 解析；Flutter 使用 Git ref 固定版本，当前未启用 pub.dev 发布。发布目标为 VivaProjects/PaywallKit-iOS；是否完成推送以远端分支和标签校验结果为准。

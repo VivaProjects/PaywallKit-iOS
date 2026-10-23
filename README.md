@@ -9,10 +9,10 @@
 Git 发布后：在 Xcode 的 Add Package Dependencies 中填写本仓库的真实 Git URL，选择已发布的 `X.Y.Z` 版本和 `PaywallKit` 产品。也可在宿主 `Package.swift` 中声明：
 
 ```swift
-.package(url: "<IOS_SDK_GIT_URL>", exact: "0.1.0")
+.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.3.0")
 ```
 
-示例 URL 需要替换，版本标签必须已经存在；当前版本登记不表示远端已发布。
+使用版本标签固定依赖；本次设备参数版本为 `0.3.0`。
 
 ## 维护与发布
 

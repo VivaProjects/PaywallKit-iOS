@@ -26,7 +26,7 @@ H5 自行加载同版本的 `content.json` 并校验文案和展示绑定；原�
 
 H5 通过 `PaywallBridge.postMessage(JSON.stringify({type,...}))` 发送动作；原生调用 `window.PaywallRuntime.receive(...)`。`bootstrap` 仅包含 `type`、`bridgeVersion`、`sessionID`、受限的会话级 `custom` 和 `products`。商品以真实 ID 作为 `productRef` 匹配，展示价格、披露和宿主确认的资格；购买与恢复结果使用状态码，提示文案由 H5 维护。
 
-`custom` 平铺包含 `placement`、`language`、`deviceModel`、`country`、`appVersion`、`runtimeEnvironment`。国家必须来自商店账户，使用 ISO alpha-3 大写值，未知传空字符串；设备型号不能是设备唯一标识。iOS 可通过 `WebPaywallEnvironmentConfiguration` 单独覆盖字段，未配置字段使用 SDK 当前默认值；Flutter 由宿主提供环境对象。`custom` 不得包含或覆盖商店价格、披露或页面文案。环境、商品资格或 custom 改变后创建新会话，不复用旧 WebView 会话。
+`custom` 平铺包含 `placement`、`os`、`isPad`、`language`、`deviceModel`、`country`、`appVersion`、`runtimeEnvironment`。国家必须来自商店账户，使用 ISO alpha-3 大写值，未知传空字符串；设备型号不能是设备唯一标识。iOS 可通过 `WebPaywallEnvironmentConfiguration` 单独覆盖字段，未配置字段使用 SDK 当前默认值；Flutter 由宿主提供环境对象。`custom` 不得包含或覆盖商店价格、披露或页面文案。环境、商品资格或 custom 改变后创建新会话，不复用旧 WebView 会话。
 
 ## 加载与首屏就绪
 
@@ -127,7 +127,7 @@ To clear idle files call `await WebPaywallResourceCache.shared.clear()` on eithe
 
 ## H5 环境字段统一注入 custom
 
-`sessionContext` 和 `bootstrap` 不再发送顶层 `environment`。`custom` 平铺包含 `placement`、`runtimeEnvironment`、`language`、`deviceModel`、`country`、`appVersion`，并保留宿主传入的业务字段（例如 `questionnaireResult`、`coldStartVariant`）。同名冲突时以 SDK 冻结的环境值为准。H5 从 `message.custom` / `PaywallRuntime.custom` 读取；宿主 SDK 的 environment 配置入口及缓存身份不变。
+`sessionContext` 和 `bootstrap` 不再发送顶层 `environment`。`custom` 平铺包含 `placement`、`runtimeEnvironment`、`os`、`isPad`、`language`、`deviceModel`、`country`、`appVersion`，并保留宿主传入的业务字段（例如 `questionnaireResult`、`coldStartVariant`）。同名冲突时以 SDK 冻结的环境值为准。H5 从 `message.custom` / `PaywallRuntime.custom` 读取；宿主 SDK 的 environment 配置入口及缓存身份不变。
 
 这是桥消息结构变更，SDK 与页面包必须配套发布；已发布的旧页面包需要重新打包并递增 revision，不能覆盖原有不可变包。
 
@@ -150,3 +150,11 @@ To clear idle files call `await WebPaywallResourceCache.shared.clear()` on eithe
 在展示树根部调用 `.onPaywallLoadingChange { state in ... }`，SDK 即停止绘制该树的默认加载 UI，只提供 `PaywallLoadingState`：`id` 为阶段标识、`isLoading` 为是否仍在加载、`cancel` 为可用时的主线程取消回调。宿主按标识聚合状态，结束事件只移除同一标识；配置和 H5 准备之间应合并交接，避免闪烁。H5 以 `renderReady` 结束加载，错误、取消及视图移除也会结束对应状态。后台预加载不显示提示；热页命中不进入加载分支。
 
 取消只结束当前展示，已关闭页面不会因后台完成重新弹出；共用查询及缓存更新保持原策略。宿主负责遮罩外观、关闭按钮、前后台窗口生命周期及无障碍。未设置回调的宿主继续使用 SDK 默认加载 UI，公共入口无需迁移。
+
+### 系统与平板参数
+
+H5 在 `sessionContext.custom` / `bootstrap.custom` 中读取 `os`（`"iOS"` / `"Android"`）与 `isPad`（布尔值）。配置变化会改变会话缓存身份。
+
+iOS：`WebPaywallEnvironmentConfiguration(os: "iOS", isPad: true)`；省略时系统为 iOS，是否 iPad 由 `UIDevice.userInterfaceIdiom` 自动判断。
+
+Flutter：`WebPaywallEnvironment(..., os: 'Android', isPad: true)`；手动创建环境时，省略 `os` 使用当前平台，省略 `isPad` 默认为 false。推荐通过 `PaywallEnvironmentProvider.capture()` 自动采集：iOS 使用设备 idiom，Android 使用 `smallestScreenWidthDp >= 600`；需要其他平板定义时由宿主显式传入。高层入口复制点位时保留两个字段。GET 查询将布尔值编码为 `true` / `false`，桥消息中仍为 JSON 布尔值。
