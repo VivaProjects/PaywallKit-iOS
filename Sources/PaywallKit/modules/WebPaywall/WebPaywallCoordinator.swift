@@ -13,6 +13,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     private var onContentHeightChange: ((CGFloat) -> Void)?
     private(set) var contentHeight: CGFloat?
     private var onReady: (() -> Void)?
+    private var onReadyProducts: (([String]) -> Void)?
     private var onFailure: (() -> Void)?
     private var onTypedFailure: ((PaywallFailure) -> Void)?
     private var queryingProducts = false
@@ -29,6 +30,9 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     private var attachmentRevision = 0
     private var bridgeReady = false
     private var bootstrapSent = false
+    private var supportsDeferredProducts = false
+    private var productsDelivered = false
+    private var productsLoaded = false
     private var contextSent = false
     private var expectsProductRequest = false
     private var requestedProductRefs: [String]?
@@ -53,6 +57,11 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     var allowsActions = true
     var requiresRenderReady = false
 
+    /// 只曝光 H5 显式请求的商品，旧页隐式查询不冒充 H5 请求。
+    private var exposureProductRefs: [String] {
+        expectsProductRequest ? requestedProductRefs ?? [] : []
+    }
+
     var isReady: Bool { active && rendered }
     var isReusable: Bool { active && webView != nil }
 
@@ -70,10 +79,12 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
                 onFailure: @escaping () -> Void,
                 onContentHeightChange: ((CGFloat) -> Void)? = nil,
                 onTypedFailure: ((PaywallFailure) -> Void)? = nil,
-                onResourceSource: ((String) -> Void)? = nil) {
+                onResourceSource: ((String) -> Void)? = nil,
+                onReadyProducts: (([String]) -> Void)? = nil) {
         self.onContentHeightChange = onContentHeightChange
         self.host = host
         self.onReady = onReady
+        self.onReadyProducts = onReadyProducts
         self.onFailure = onFailure
         self.onTypedFailure = onTypedFailure
         self.onResourceSource = onResourceSource
@@ -84,6 +95,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         if rendered {
             DispatchQueue.main.async { [weak self] in
                 if let self { self.onResourceSource?(self.resourceSource) }
+                // 热页复用原会话的请求清单，不重新使用发布清单推导商品。
+                if let self { self.onReadyProducts?(self.exposureProductRefs) }
                 self?.onReady?()
                 if let height = self?.contentHeight { self?.onContentHeightChange?(height) }
             }
@@ -110,6 +123,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         host = nil
         onContentHeightChange = nil
         onReady = nil
+        onReadyProducts = nil
         onFailure = nil
         onTypedFailure = nil
         onResourceSource = nil
@@ -123,16 +137,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         scrollView.setContentOffset(
             CGPoint(x: scrollView.contentOffset.x, y: -scrollView.adjustedContentInset.top),
             animated: false)
-        let script = """
-        (() => {
-            const elements = [document.scrollingElement, ...document.querySelectorAll('*')];
-            for (const element of new Set(elements)) {
-                if (element && element.scrollTop !== 0) {
-                    element.scrollTo({ top: 0, left: element.scrollLeft, behavior: 'instant' });
-                }
-            }
-        })();
-        """
+        let script = WebPaywallPageScripts.resetScroll
         // 直接投递到当前文档；不加入桥消息队列，避免下次展示时重复重置。
         webView.evaluateJavaScript(script) { [weak self] _, error in
             if error != nil { self?.trace("scroll.reset_failed") }
@@ -270,6 +275,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     private func queryProducts(_ refs: [String]) {
         guard active, requestedProductRefs == nil, let bridge = host?.bridge else { return }
         requestedProductRefs = refs
+        if supportsDeferredProducts { bootstrapIfPossible() }
         productsTask = Task { [weak self] in
             guard let self else { return }
             await self.loadProducts(using: bridge)
@@ -282,9 +288,10 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         defer { queryingProducts = false }
         trace("products.start", "requested=\(requestedProductRefs?.count ?? 0)")
         do {
-            let values = try await bridge.products(
-                references: requestedProductRefs ?? [], storefrontGroup: storefrontGroup)
+            let values = try await WebPaywallProductPayload.load(bridge: bridge,
+                references: requestedProductRefs ?? [], group: storefrontGroup, deferred: supportsDeferredProducts)
             guard active, !Task.isCancelled else { return }
+            productsLoaded = true
             // 只接收已通过发布清单校验的请求商品，忽略宿主额外返回项。
             for product in values where requestedProductRefs?.contains(product.productRef) == true {
                 products[product.productRef] = product
@@ -299,25 +306,18 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         }
     }
 
-    /// 桥和商品都准备好后只注入一次；重复 ready 不会重复查询或重置购买状态。
+    /// 新页先接收空商品首屏，商品返回后单独补齐；旧页仍等待商品后初始化。
     private func bootstrapIfPossible() {
-        guard active, bridgeReady, (!products.isEmpty || host?.bridge.requiresStoreProducts == false),
-              let environment, !bootstrapSent else { return }
+        guard active, bridgeReady, (supportsDeferredProducts || productsLoaded),
+              let environment, !productsDelivered else { return }
+        let updating = bootstrapSent
+        guard !updating || productsLoaded else { return }
         bootstrapSent = true
-        let visible = (requestedProductRefs ?? []).compactMap { products[$0] }.map { product in
-            var value: [String: Any] = ["productRef": product.productRef,
-                         "displayPrice": product.displayPrice, "disclosure": product.disclosure]
-            if let period = product.periodText { value["periodText"] = period }
-            if let daily = product.dailyPriceText { value["dailyPriceText"] = daily }
-            if let introductory = product.introductoryPriceText {
-                value["introductoryPriceText"] = introductory
-            }
-            if let eligible = product.isEligibleForFreeTrial { value["isEligibleForFreeTrial"] = eligible }
-            return value
-        }
+        productsDelivered = productsLoaded
+        let visible = WebPaywallProductPayload.make(references: requestedProductRefs ?? [], products: products)
         let customPayload = environment.customPayload(custom)
         guard JSONSerialization.isValidJSONObject(customPayload) else { fail(); return }
-        send(["type": "bootstrap", "bridgeVersion": 2, "sessionID": sessionID,
+        send(["type": updating ? "productsUpdated" : "bootstrap", "bridgeVersion": 2, "sessionID": sessionID,
               "products": visible,
               "custom": customPayload, "capabilities": ["presentationState"]])
     }
@@ -326,7 +326,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
         guard active, message.frameInfo.isMainFrame,
-              let url = message.frameInfo.request.url, isAllowedPage(url),
+              let url = message.frameInfo.request.url, WebPaywallPageScripts.allows(url, expected: loadedPageURL),
               let text = message.body as? String, text.utf8.count <= 2_048,
               let data = text.data(using: .utf8),
               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -347,6 +347,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
             expectsRenderReady = (event["capabilities"] as? [String])?.contains("renderReady") == true
             guard !requiresRenderReady || expectsRenderReady else { fail(); return }
             expectsProductRequest = (event["capabilities"] as? [String])?.contains("productRequest") == true
+            supportsDeferredProducts = expectsProductRequest && expectsRenderReady
+                && (event["capabilities"] as? [String])?.contains("deferredProducts") == true
             sendContextIfPossible()
         case "productsRequest":
             receiveProductRequest(event)
@@ -388,6 +390,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         trace("render.ready")
         rendered = true
         deadlineTask?.cancel()
+        // 请求口径包含商店未返回的商品，不能替换为可售商品结果。
+        onReadyProducts?(exposureProductRefs)
         onReady?()
         notifyPresentationWhenReady()
     }
@@ -468,19 +472,10 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         }
     }
 
-    /// 内置页只接受精确主文档；远端沿用宿主指定的 HTTPS 来源。
-    private func isAllowedPage(_ url: URL) -> Bool {
-        guard let expected = loadedPageURL else { return false }
-        if expected.isFileURL {
-            return url.isFileURL && url.resolvingSymlinksInPath() == expected.resolvingSymlinksInPath()
-        }
-        return url == expected
-    }
-
     /// 保持现有来源限制，结束的会话禁止继续导航。
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        let allowed = active && (navigationAction.request.url.map(isAllowedPage) ?? false)
+        let allowed = active && (navigationAction.request.url.map { WebPaywallPageScripts.allows($0, expected: loadedPageURL) } ?? false)
         trace("navigation.policy", "allowed=\(allowed)")
         decisionHandler(allowed ? .allow : .cancel)
     }

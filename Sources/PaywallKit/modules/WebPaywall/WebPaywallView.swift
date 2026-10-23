@@ -14,6 +14,8 @@ import WebKit
     public let isPresented: Bool
     public let onContentHeightChange: ((CGFloat) -> Void)?
     public let onReady: () -> Void
+    /// 首屏就绪时返回本次已校验的查询 ID；热页保留原请求顺序与清单。
+    public let onReadyProducts: (([String]) -> Void)?
     public let onFailure: ((PaywallFailure) -> Void)?
     public let onResourceSource: ((String) -> Void)?
     public let fallback: () -> NativeFallback
@@ -30,6 +32,7 @@ import WebKit
                 onReady: @escaping () -> Void = {},
                 onFailure: ((PaywallFailure) -> Void)? = nil,
                 onResourceSource: ((String) -> Void)? = nil,
+                onReadyProducts: (([String]) -> Void)? = nil,
                 @ViewBuilder fallback: @escaping () -> NativeFallback) {
         self.document = document
         self.storefrontGroup = storefrontGroup
@@ -41,6 +44,7 @@ import WebKit
         self.isPresented = isPresented
         self.onContentHeightChange = onContentHeightChange
         self.onReady = onReady
+        self.onReadyProducts = onReadyProducts
         self.onFailure = onFailure
         self.onResourceSource = onResourceSource
         self.fallback = fallback
@@ -62,6 +66,7 @@ import WebKit
                                         preparationDeadline: preparationDeadline, isPresented: isPresented,
                                         onContentHeightChange: onContentHeightChange,
                                         onReady: { ready = true; onReady() },
+                                        onReadyProducts: onReadyProducts,
                                         onFailure: { failed = true }, onTypedFailure: onFailure,
                                         onResourceSource: onResourceSource)
                         .allowsHitTesting(ready && isPresented)

@@ -133,7 +133,7 @@ SDK 通过 `track` 回调输出固定事件及文档版本，宿主转发现有�
 
 ## 测试环境诊断日志
 
-支付墙生命周期日志仅在宿主显式设置 `runtimeEnvironment: test` 时输出，与 Debug/Release 编译模式无关；`production` 不输出这些诊断。iOS 使用系统日志（subsystem `PaywallKit`、category `Lifecycle`），Flutter 输出到运行控制台，统一搜索 `[PaywallKit][test]`。
+iOS 默认仅在 `runtimeEnvironment: test` 时输出日志，与 Debug/Release 编译模式无关。SDK 0.2.0 起可在创建 Client 前设置 `PaywallLogging.mode = .enabled`，独立开启 production 日志；`.disabled` 全部关闭，`.automatic` 恢复默认行为。开关不修改运行环境。iOS 使用系统日志（subsystem `PaywallKit`、category `Lifecycle`），搜索 `[PaywallKit][production]` 或 `[PaywallKit][test]`，包括配置请求与响应正文，不包含请求头。Flutter 仍按其 SDK 的测试环境规则输出到运行控制台。
 
 - `preload.*` / `prepared_page.*`：准备、复用、就绪、接管、取消、超时及失败。
 - `cache.*`：WebView 缓存命中、身份不匹配、挂载接管、保留、释放和清理。
@@ -155,3 +155,13 @@ SDK 通过 `track` 回调输出固定事件及文档版本，宿主转发现有�
 ### 空商品展示与交易权限（0.1.5）
 
 `requiresStoreProducts` 只控制页面是否必须取得商品才能完成 bootstrap。`allowsStoreActions` 独立控制购买与恢复，默认沿用 `requiresStoreProducts`，保持旧纯展示桥禁用交易。允许空商品展示但仍提供购买的宿主，应设置 `requiresStoreProducts = false`、`allowsStoreActions = true`；购买仍必须命中本次商店返回的商品。高层会话包装桥透传两项权限，被拒绝的交易动作回传 failed，避免网页停留在等待态。桥消息格式不变。
+
+### iOS 曝光商品口径
+
+`PaywallSessionEvent.ready(productRefs:)` 返回本次 H5 `productsRequest` 中通过校验的商品 ID，保留请求顺序，包括商店未返回的商品；不返回文档完整绑定或商店可售结果。预加载和热页复用保留同一 WebView 会话的请求列表。旧 H5 未声明 `productRequest` 能力时返回空数组，不用发布清单补齐。底层接入可使用 `WebPaywallView.onReadyProducts` 获取同一列表，原 `onReady` 回调保持兼容。此改动不改变 H5/Flutter 的桥消息协议。
+
+### 冷启动首屏与商品分离
+
+H5 在 `ready.capabilities` 声明 `deferredProducts`（同时声明 `productRequest` 和 `renderReady`）后，iOS SDK 在校验 `productsRequest` 后先发送空 `products` 的 `bootstrap`。H5 完成静态内容和关键资源绘制后照常回报 `bootstrapped` / `renderReady`，原生此时可以展示。真实商品返回后发送同一 `sessionID` 的 `productsUpdated`，H5 只更新绑定商品和购买可用状态，不重新初始化页面、不重复曝光。商品缺失时购买必须禁用；商品查询超时或失败沿用原生降级/重试路径。
+
+旧 H5 未声明能力时仍等待商品；旧 iOS / Flutter 宿主可忽略新增能力并发送一次完整 bootstrap，页面仍兼容。预览同样可以使用完整 bootstrap。本改动须同时交付新 iOS SDK 与新冷启动页面包；已缓存旧页面仍走旧时序，不能仅升级宿主就认定生效。

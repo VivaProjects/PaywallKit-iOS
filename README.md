@@ -31,3 +31,17 @@ xcodebuild -scheme PaywallKit -destination 'generic/platform=iOS Simulator' -der
 - [本地包与回退](docs/LOCAL_PAYWALL_FALLBACK.md)
 
 SDK 负责宿主交互、商品查询接口、购买/恢复桥接、会话、缓存及原生回退。业务 H5 文案和页面包由宿主提供，不随 SDK 发布。协议快照位于 `protocol/`，变更时协调其他实现的兼容性，但各自独立发版。
+
+## 诊断日志
+
+在创建 `PaywallClient` 前配置 SDK 全局日志模式：
+
+```swift
+PaywallLogging.mode = .enabled   // test、production 均输出
+// PaywallLogging.mode = .disabled  // 全部关闭
+// PaywallLogging.mode = .automatic // 默认：仅 test 输出
+```
+
+开关线程安全，可在运行中调整，只影响之后的日志输出；不会改变请求环境、商品绑定或缓存身份。生命周期、查询和配置请求日志统一受控，前缀保留实际环境，例如 `[PaywallKit][production]`。在 Xcode 控制台筛选 `PaywallKit`，或在 macOS Console 中选择连接设备并按 subsystem `PaywallKit` 筛选。
+
+开启时包含配置请求和响应正文（不含请求头），用于排查的版本可开启，诊断结束后可切回 `.automatic` 或 `.disabled`。

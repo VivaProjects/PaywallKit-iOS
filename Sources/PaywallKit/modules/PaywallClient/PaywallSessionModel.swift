@@ -180,8 +180,9 @@ final class PaywallSessionModel: ObservableObject {
         fallbackContext?.record(session.input.document, source: source)
     }
 
-    /// 首屏渲染每个会话仅上报一次，业务曝光策略仍可在外层去重。
-    func ready(session: Session, client: PaywallClient, onEvent: (PaywallSessionEvent) -> Void) {
+    /// 首屏每个会话仅上报一次，商品沿用本次查询清单而非文档完整绑定。
+    func ready(session: Session, productRefs: [String], client: PaywallClient,
+               onEvent: (PaywallSessionEvent) -> Void) {
         guard generation == session.id, !hasReportedReady else { return }
         hasReportedReady = true
         if let selectedPlacement {
@@ -192,7 +193,7 @@ final class PaywallSessionModel: ObservableObject {
             }
         }
         if let resolution = fallbackContext?.resolution { onEvent(.resolved(resolution)) }
-        onEvent(.ready(productRefs: session.input.document.productRefs))
+        onEvent(.ready(productRefs: productRefs))
     }
 
     /// 页面错误与目录失效统一进入可重试状态，并阻止旧交易回调驱动新页面。
