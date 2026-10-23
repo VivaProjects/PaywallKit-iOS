@@ -90,4 +90,4 @@ POST 的 `conditions.os` 为 `"iOS"` 或 `"Android"`，`conditions.isPad` 为 JS
 
 ### 更新结果诊断
 
-`PaywallQueryConfiguration(onUpdateDiagnostic:)` 在日志实际开启时于 MainActor 回调本轮最终结果：`completed(updatedPlacements:failures:)` 或 `failed`。宿主可复用自己的 Toast；失败数包含独立下载包、点位归档或索引维护失败。中间重试和取消不回调，部分失败不会误报全部成功。无下载候选时返回零计数，宿主可不提示。该回调不负责页面切换，也不意味着新版已在当前页面生效。
+`PaywallQueryConfiguration(onUpdateDiagnostic:)` 在日志实际开启时于 MainActor 回调本轮最终结果：`completed(updatedPlacements:failures:)` 或 `failed`。宿主可复用自己的 Toast；失败数包含独立下载包、点位归档或索引维护失败。中间重试和取消不回调，部分失败不会误报全部成功。无下载候选或所有页面发布身份与展示方式均未变化时，更新数为零，宿主可提示无需更新。该回调不负责页面切换，也不意味着新版已在当前页面生效。

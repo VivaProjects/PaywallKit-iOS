@@ -185,8 +185,9 @@ final class PaywallQueryRuntime {
             preferredPlacement: { self.preferredPlacement },
             onUnavailable: { self.markUnavailable($0) }) { page in
             do {
+                let changed = try self.requiresUpdate(page)
                 try await self.accept(page, request: request)
-                updatedPlacements += 1
+                if changed { updatedPlacements += 1 }
             }
             catch is CancellationError { throw CancellationError() }
             catch {
@@ -200,8 +201,16 @@ final class PaywallQueryRuntime {
             failures += 1
             trace("query.snapshot_failed", "operation=remove_unmatched")
         }
-        trace("query.update_finished", "updated=\(batch.pages.count) unmatched=\(batch.unmatched.count) failures=\(failures + batch.failures)")
+        trace("query.update_finished", "updated=\(updatedPlacements) unmatched=\(batch.unmatched.count) failures=\(failures + batch.failures)")
         report(.completed(updatedPlacements: updatedPlacements, failures: failures + batch.failures))
+    }
+
+    /// 比较完整发布身份与展示方式，同版本缓存校验完成不计为新更新。
+    private func requiresUpdate(_ page: PaywallQueryResponse.Page) throws -> Bool {
+        guard let current = activePlacements[page.placement] else { return true }
+        let document = current.remoteDocument ?? current.document
+        return try WebPaywallPackage.identity(document) != WebPaywallPackage.identity(page.document)
+            || current.presentation != page.presentation
     }
 
     /// 先校验再提交，当前已有版本绝不被后台结果替换。
