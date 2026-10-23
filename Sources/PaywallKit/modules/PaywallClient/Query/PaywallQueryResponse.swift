@@ -17,6 +17,7 @@ struct PaywallQueryResponse: Decodable {
     struct Batch {
         let pages: [Page]
         let unmatched: Set<String>
+        var failures: Int = 0
     }
     let code: String
     let data: [Position]?
@@ -31,6 +32,7 @@ struct PaywallQueryResponse: Decodable {
     private final class DownloadQueue {
         var pending: [PackageRequest]
         var completed = 0
+        var failures = 0
         var inFlight = 0
         let preferredPlacement: @MainActor () -> String?
 
@@ -79,7 +81,7 @@ struct PaywallQueryResponse: Decodable {
             for try await result in group { pages.append(contentsOf: result) }
             return pages
         }
-        return Batch(pages: pages, unmatched: selection.unmatched)
+        return Batch(pages: pages, unmatched: selection.unmatched, failures: queue.failures)
     }
 
     /// 单包失败只跳过关联点位，成功立即通知等待该点位的展示。
@@ -92,13 +94,17 @@ struct PaywallQueryResponse: Decodable {
             try Task.checkCancellation()
             let package: (WebPaywallDocument, WebPaywallResourceLease)
             do {
-                package = try await WebPaywallPackageLoader.prepare(
-                    pageURL: request.url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
-                    allowedOrigins: configuration.allowedOrigins, catalog: catalog,
-                    developmentHTTPOrigin: configuration.developmentHTTPOrigin)
+                package = try await PaywallQueryRetry.run(environment: configuration.runtimeEnvironment.rawValue, stage: "package") {
+                    try await configuration.waitUntilNetworkAvailable?()
+                    return try await WebPaywallPackageLoader.prepare(
+                        pageURL: request.url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
+                        allowedOrigins: configuration.allowedOrigins, catalog: catalog,
+                        developmentHTTPOrigin: configuration.developmentHTTPOrigin)
+                }
             } catch is CancellationError { throw CancellationError() }
             catch {
                 queue.inFlight -= 1
+                queue.failures += 1
                 try Task.checkCancellation()
                 for target in request.targets {
                     WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue,

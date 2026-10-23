@@ -36,9 +36,10 @@ final class WebPaywallResourceDownload: NSObject, URLSessionTaskDelegate, @unche
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
                                  timeoutInterval: min(30, remaining))
         let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+        guard let http = response as? HTTPURLResponse,
               http.url == url, response.expectedContentLength <= Int64(limit)
         else { throw URLError(.badServerResponse) }
+        guard http.statusCode == 200 else { throw PaywallQueryRetry.HTTPFailure(status: http.statusCode) }
         var result = Data()
         for try await byte in bytes {
             guard result.count < limit else { throw URLError(.dataLengthExceedsMaximum) }

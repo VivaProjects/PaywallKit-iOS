@@ -13,6 +13,7 @@ final class PaywallQueryRuntime {
     private var queryTask: Task<Void, Error>?
     private var queryFinished = false
     private var unavailablePlacements: Set<String> = []
+    private var deferredPlacements: Set<String> = []
     private var preferredPlacement: String?
     private var queryFailure: Error?
     private var progressObservers: [UUID: AsyncStream<Void>.Continuation] = [:]
@@ -65,14 +66,14 @@ final class PaywallQueryRuntime {
     }
 
     /// 缺失点位只等自身就绪，关闭入口不取消唯一后台更新。
-    func resolve(_ placement: String) async throws -> PaywallPlacement? {
+    func resolve(_ placement: String, presentation: Bool = false) async throws -> PaywallPlacement? {
         _ = startQuery()
-        try await waitForPlacement(placement)
+        try await waitForPlacement(placement, presentation: presentation)
         return activePlacements[placement]
     }
 
     /// 点位就绪或响应确认不可用时结束等待；取消仅移除当前等待者。
-    private func waitForPlacement(_ placement: String?) async throws {
+    private func waitForPlacement(_ placement: String?, presentation: Bool = false) async throws {
         try Task.checkCancellation()
         if canFinishWaiting(placement) { return }
         if !queryFinished {
@@ -80,7 +81,19 @@ final class PaywallQueryRuntime {
             let progress = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) {
                 progressObservers[token] = $0
             }
-            defer { progressObservers.removeValue(forKey: token)?.finish() }
+            // 仅可见入口设置三秒期限；结束等待不会取消共享下载。
+            let timeout: Task<Void, Never>? = presentation ? Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 3_000_000_000) }
+                catch { return }
+                guard let self, let placement, !self.canFinishWaiting(placement) else { return }
+                self.deferredPlacements.insert(placement)
+                self.trace("query.presentation_timeout", "placement=\(placement) seconds=3")
+                self.progressObservers.values.forEach { $0.yield(()) }
+            } : nil
+            defer {
+                timeout?.cancel()
+                progressObservers.removeValue(forKey: token)?.finish()
+            }
             // MainActor 内先注册再挂起，提交通知不会落在检查与订阅之间。
             for await _ in progress {
                 try Task.checkCancellation()
@@ -96,6 +109,7 @@ final class PaywallQueryRuntime {
     private func canFinishWaiting(_ placement: String?) -> Bool {
         if let placement {
             return activePlacements[placement] != nil || unavailablePlacements.contains(placement)
+                || deferredPlacements.contains(placement)
         }
         return !activePlacements.isEmpty
     }
@@ -135,7 +149,10 @@ final class PaywallQueryRuntime {
             do { try await self.update() }
             catch {
                 self.queryFailure = error
-                if !(error is CancellationError) { self.trace("query.update_failed", "code=\((error as NSError).code)") }
+                if !(error is CancellationError), !Task.isCancelled {
+                    self.trace("query.update_failed", "code=\((error as NSError).code)")
+                    self.report(.failed)
+                }
                 throw error
             }
         }
@@ -160,27 +177,31 @@ final class PaywallQueryRuntime {
     private func update() async throws {
         let request = try await request()
         await migrateLegacy(request)
-        // 归因、商店条件采集或缓存迁移期间可能断网，发送前再次确认联网。
-        try await configuration.waitUntilNetworkAvailable?()
-        try Task.checkCancellation()
-        let (bytes, response) = try await PaywallConfigurationDiagnostics.data(
-            for: request, environment: configuration.runtimeEnvironment.rawValue)
-        try Task.checkCancellation()
-        guard (response as? HTTPURLResponse)?.statusCode == 200, bytes.count <= 1_000_000 else {
-            throw WebPaywallError.invalidDocument
-        }
+        let bytes = try await queryBytes(request)
+        var failures = 0
+        var updatedPlacements = 0
         // 每个完整包立即归档，已完成点位不再等待其余包。
         let batch = try await PaywallQueryResponse.load(bytes, configuration: configuration, catalog: catalog(), maximumConcurrentPackages: 2,
             preferredPlacement: { self.preferredPlacement },
             onUnavailable: { self.markUnavailable($0) }) { page in
-            do { try await self.accept(page, request: request) }
+            do {
+                try await self.accept(page, request: request)
+                updatedPlacements += 1
+            }
             catch is CancellationError { throw CancellationError() }
-            catch { self.trace("query.snapshot_failed", "placement=\(page.placement)") }
+            catch {
+                failures += 1
+                self.trace("query.snapshot_failed", "placement=\(page.placement)")
+            }
         }
         try Task.checkCancellation()
         do { try snapshots.remove(batch.unmatched) }
-        catch { trace("query.snapshot_failed", "operation=remove_unmatched") }
-        trace("query.update_finished", "updated=\(batch.pages.count) unmatched=\(batch.unmatched.count)")
+        catch {
+            failures += 1
+            trace("query.snapshot_failed", "operation=remove_unmatched")
+        }
+        trace("query.update_finished", "updated=\(batch.pages.count) unmatched=\(batch.unmatched.count) failures=\(failures + batch.failures)")
+        report(.completed(updatedPlacements: updatedPlacements, failures: failures + batch.failures))
     }
 
     /// 先校验再提交，当前已有版本绝不被后台结果替换。
@@ -190,15 +211,11 @@ final class PaywallQueryRuntime {
             requestIdentity: PaywallQueryRequest.identity(request, namespace: configuration.cacheScope), requestBody: body,
             configuration: try PaywallQueryResponse.configurationData(placement: page.placement,
                 document: page.document, presentation: page.presentation), identity: try WebPaywallPackage.identity(page.document))
-        var selected = try snapshot.resolve(using: configuration, catalog: catalog(), clientID: client.id, lease: page.resource)
-        do {
-            let candidate = try await snapshots.save(snapshot, resource: page.resource)
-            selected = try snapshot.resolve(using: configuration, catalog: catalog(), clientID: client.id, lease: candidate.lease)
-            trace("query.cache_staged", "placement=\(page.placement) revision=\(page.document.revision ?? 0)")
-        } catch is CancellationError { throw CancellationError() }
-        catch { trace("query.snapshot_failed", "placement=\(page.placement)") }
-        // 仅缺失点位本次可用；已有点位即使尚未打开也继续使用启动快照。
-        if activePlacements[page.placement] == nil {
+        let candidate = try await snapshots.save(snapshot, resource: page.resource)
+        let selected = try snapshot.resolve(using: configuration, catalog: catalog(), clientID: client.id, lease: candidate.lease)
+        trace("query.cache_staged", "placement=\(page.placement) revision=\(page.document.revision ?? 0)")
+        // 超时走兜底的点位保持冻结，迟到包只供下次冷启动使用。
+        if activePlacements[page.placement] == nil, !deferredPlacements.contains(page.placement) {
             activePlacements[page.placement] = selected
             trace("query.placement_ready", "placement=\(page.placement)")
             progressObservers.values.forEach { $0.yield(()) }
@@ -233,7 +250,28 @@ final class PaywallQueryRuntime {
         client.useLocalPackages(store, previousVersionPlacements: fallback.previousVersionPlacements)
     }
 
-    /// 诊断只记录缓存阶段及点位，不向用户弹出后台更新结果。
+    /// 重试复用同一请求条件；每次发送前等待联网，成功后才进入下载队列。
+    private func queryBytes(_ request: URLRequest) async throws -> Data {
+        try await PaywallQueryRetry.run(environment: configuration.runtimeEnvironment.rawValue, stage: "configuration") {
+            try await self.configuration.waitUntilNetworkAvailable?()
+            try Task.checkCancellation()
+            let (bytes, response) = try await PaywallConfigurationDiagnostics.data(
+                for: request, environment: self.configuration.runtimeEnvironment.rawValue)
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else { throw WebPaywallError.invalidDocument }
+            guard http.statusCode == 200 else { throw PaywallQueryRetry.HTTPFailure(status: http.statusCode) }
+            guard bytes.count <= 1_000_000 else { throw WebPaywallError.invalidDocument }
+            return bytes
+        }
+    }
+
+    /// 日志实际开启时只报告最终结果，中间重试与取消不弹提示。
+    private func report(_ diagnostic: PaywallQueryUpdateDiagnostic) {
+        guard PaywallLogging.isEnabled(for: configuration.runtimeEnvironment.rawValue) else { return }
+        configuration.onUpdateDiagnostic?(diagnostic)
+    }
+
+    /// 记录缓存阶段及点位。
     private func trace(_ event: String, _ detail: String) {
         WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue, event, detail)
     }

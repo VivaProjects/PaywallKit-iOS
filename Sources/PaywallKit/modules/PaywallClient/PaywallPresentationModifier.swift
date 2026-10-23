@@ -282,7 +282,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
         if context.store != nil {
             selected = try await client.resolveForPresentation(key, context: context)
         } else if let cached = client.cachedPlacement(key) { selected = cached }
-        else { selected = try await client.resolve(key) }
+        else { selected = try await client.resolveForEntry(key) }
         try Task.checkCancellation()
         guard hasRequest, item?.id == value.id else { throw CancellationError() }
         guard let selected else {

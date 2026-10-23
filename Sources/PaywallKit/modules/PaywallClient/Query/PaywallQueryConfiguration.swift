@@ -2,6 +2,7 @@ import Foundation
 
 /// 查询接口接入声明；协议细节、设备条件和缓存生命周期由 SDK 管理。
 public struct PaywallQueryConfiguration {
+    let onUpdateDiagnostic: (@MainActor @Sendable (PaywallQueryUpdateDiagnostic) -> Void)?
     let endpoint: URL
     let runtimeEnvironment: WebPaywallRuntimeEnvironment
     let cacheNamespace: String
@@ -19,7 +20,9 @@ public struct PaywallQueryConfiguration {
                 cacheNamespace: String, allowedOrigins: Set<String>?,
                 placements: [String: String], fallback: PaywallQueryFallback? = nil,
                 developmentHTTPOrigin: String? = nil,
-                waitUntilNetworkAvailable: (@Sendable () async throws -> Void)? = nil) {
+                waitUntilNetworkAvailable: (@Sendable () async throws -> Void)? = nil,
+                onUpdateDiagnostic: (@MainActor @Sendable (PaywallQueryUpdateDiagnostic) -> Void)? = nil) {
+        self.onUpdateDiagnostic = onUpdateDiagnostic
         self.endpoint = endpoint
         self.runtimeEnvironment = runtimeEnvironment
         self.cacheNamespace = cacheNamespace
