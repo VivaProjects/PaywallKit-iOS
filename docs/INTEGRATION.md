@@ -159,3 +159,8 @@ iOS 默认仅在 `runtimeEnvironment: test` 时输出日志，与 Debug/Release 
 ### iOS 曝光商品口径
 
 `PaywallSessionEvent.ready(productRefs:)` 返回本次 H5 `productsRequest` 中通过校验的商品 ID，保留请求顺序，包括商店未返回的商品；不返回文档完整绑定或商店可售结果。预加载和热页复用保留同一 WebView 会话的请求列表。旧 H5 未声明 `productRequest` 能力时返回空数组，不用发布清单补齐。底层接入可使用 `WebPaywallView.onReadyProducts` 获取同一列表，原 `onReady` 回调保持兼容。此改动不改变 H5/Flutter 的桥消息协议。
+
+
+## 延迟商品加载（0.2.2）
+
+H5 同时声明 `productRequest`、`renderReady`、`deferredProducts` 时，iOS 在合法 `productsRequest` 后先发送空商品 `bootstrap`，商品查询成功后发送 `productsUpdated`。页面必须在真实商品与披露到达前禁用购买，不得填充演示价格。延迟模式商品查询上限为 12 秒，失败沿用商品不可用处理。未声明该能力的旧页继续等待商品后初始化；Flutter 尚未启用此可选能力，页面仍须兼容带商品的常规 bootstrap。
