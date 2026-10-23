@@ -160,8 +160,13 @@ iOS 默认仅在 `runtimeEnvironment: test` 时输出日志，与 Debug/Release 
 
 `PaywallSessionEvent.ready(productRefs:)` 返回本次 H5 `productsRequest` 中通过校验的商品 ID，保留请求顺序，包括商店未返回的商品；不返回文档完整绑定或商店可售结果。预加载和热页复用保留同一 WebView 会话的请求列表。旧 H5 未声明 `productRequest` 能力时返回空数组，不用发布清单补齐。底层接入可使用 `WebPaywallView.onReadyProducts` 获取同一列表，原 `onReady` 回调保持兼容。此改动不改变 H5/Flutter 的桥消息协议。
 
-### 冷启动首屏与商品分离
 
-H5 在 `ready.capabilities` 声明 `deferredProducts`（同时声明 `productRequest` 和 `renderReady`）后，iOS SDK 在校验 `productsRequest` 后先发送空 `products` 的 `bootstrap`。H5 完成静态内容和关键资源绘制后照常回报 `bootstrapped` / `renderReady`，原生此时可以展示。真实商品返回后发送同一 `sessionID` 的 `productsUpdated`，H5 只更新绑定商品和购买可用状态，不重新初始化页面、不重复曝光。商品缺失时购买必须禁用；商品查询超时或失败沿用原生降级/重试路径。
+## 延迟商品加载（0.2.2）
 
-旧 H5 未声明能力时仍等待商品；旧 iOS / Flutter 宿主可忽略新增能力并发送一次完整 bootstrap，页面仍兼容。预览同样可以使用完整 bootstrap。本改动须同时交付新 iOS SDK 与新冷启动页面包；已缓存旧页面仍走旧时序，不能仅升级宿主就认定生效。
+H5 同时声明 `productRequest`、`renderReady`、`deferredProducts` 时，iOS 在合法 `productsRequest` 后先发送空商品 `bootstrap`，商品查询成功后发送 `productsUpdated`。页面必须在真实商品与披露到达前禁用购买，不得填充演示价格。延迟模式商品查询上限为 12 秒，失败沿用商品不可用处理。未声明该能力的旧页继续等待商品后初始化；Flutter 1.1.0 起也支持此可选能力，页面仍须兼容旧宿主带商品的常规 bootstrap。
+
+## 0.3.0 设备参数接入
+
+升级依赖到 `0.3.0`。SDK 向 H5 的 `custom` 平铺注入 `os`（`iOS` / `Android`）与 `isPad`（布尔值），POST 查询在 `conditions` 中传同名字段；GET 使用字符串查询参数。设备参数变化后需新建会话。
+
+SwiftPM：`.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.3.0")`。查询式入口自动采集 iOS 与 iPad 状态；会话配置可通过 `WebPaywallEnvironmentConfiguration(os: "iOS", isPad: true)` 显式覆盖。

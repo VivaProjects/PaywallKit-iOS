@@ -29,7 +29,7 @@ try await client.prepare()
 
 The optional `PaywallQueryConfiguration(waitUntilNetworkAvailable:)` async throwing closure lets the host reuse its connectivity monitor. It must return only when online and propagate task cancellation. The SDK calls it before collecting attribution/storefront conditions and again immediately before sending the POST; it should be safe to call repeatedly and return immediately while online. Offline or unknown connectivity waits within the single shared task without consuming the five-second attribution window or retaining an offline failure. Restored snapshots and bundled fallbacks remain available. Network recovery continues that same task; it does not enable retries after a request has failed. Omitting this closure preserves the existing direct-request behavior. Path availability does not guarantee the endpoint is reachable; request failures still follow the existing fallback policy.
 
-The POST JSON body contains a single `conditions` object with `channel`, `version`, `device_type`, `language`, and `country`. Attribution is sent as `conditions.channel`; there is no top-level channel field.
+The POST JSON body contains a single `conditions` object with `channel`, `version`, `device_type`, `language`, `country`, `os`, and `isPad`. Attribution is sent as `conditions.channel`; there is no top-level channel field.
 
 The SDK automatically scopes the supplied cache namespace by runtime environment, so configuration, attribution and package state cannot cross environments even when a host reuses a namespace. The SDK waits up to five seconds for an unknown channel, falls back to `organic`, and persists confirmed attribution only. It gathers app version and passes system values through unchanged: `device_type` uses the same concrete hardware model identifier as the H5 environment (for example `iPhone17,1`); simulators use `SIMULATOR_MODEL_IDENTIFIER`, `language` uses `Locale.preferredLanguages.first` (for example `en-US`), and `country` uses `Storefront.current.countryCode` (for example `USA`). Missing language or country is sent as an empty string. This does not change the H5 bridge country contract. Only the query uses these wire field names.
 
@@ -79,3 +79,11 @@ No H5 bridge payload or Flutter API is changed.
 ### 查询页面下载调度
 
 查询运行时最多并行准备两个页面包，每包最多四个资源请求；相同 URL 合并下载，各点位完整校验和归档后立即可用。可见入口将当前点位提升到待下载队列首位（占用下一个空闲槽，不中断正在下载的包）；后台预加载不覆盖点击优先级。仍只查询一次配置，已有缓存本次冻结、新包下次启动生效，单包失败不影响其他包。通用配置转换保留顺序准备页面包。
+
+### 查询设备参数
+
+POST 的 `conditions.os` 为 `"iOS"` 或 `"Android"`，`conditions.isPad` 为 JSON 布尔值，含义与 H5 `custom` 中的同名字段一致。iOS 自动读取设备 idiom；Flutter 使用本次查询环境中的值。完整 POST body 参与请求缓存身份。GET 请求对应使用 `os=iOS&isPad=false` 等字符串查询参数。
+
+```json
+{"conditions":{"channel":"organic","version":"1.0","device_type":"iPhone17,1","language":"en-US","country":"USA","os":"iOS","isPad":false}}
+```

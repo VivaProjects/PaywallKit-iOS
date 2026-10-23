@@ -1,10 +1,13 @@
 import CryptoKit
 import Foundation
 import StoreKit
+import UIKit
 
 /// 业务查询协议独立于 H5 环境；设备使用具体硬件机型，语言和商店国家保留系统原值。
 struct PaywallQueryRequest: Codable {
     struct Conditions: Codable {
+        let os: String
+        let isPad: Bool
         let channel: String
         let version: String
         let device_type: String
@@ -31,6 +34,7 @@ struct PaywallQueryRequest: Codable {
         // 复用 H5 的具体硬件机型；首选语言不做翻译或大小写转换。
         let language = Locale.preferredLanguages.first ?? ""
         let body = Self(conditions: Conditions(
+            os: "iOS", isPad: UIDevice.current.userInterfaceIdiom == .pad,
             channel: attribution.channel ?? channel,
             version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
             device_type: WebPaywallEnvironment.deviceModelIdentifier(),

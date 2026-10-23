@@ -10,10 +10,10 @@ public struct PaywallRequestParameters {
     public init(language: String? = nil, deviceModel: String? = nil,
                 country: String? = nil, appVersion: String? = nil,
                 runtimeEnvironment: WebPaywallRuntimeEnvironment = .test,
-                additional: [String: String] = [:]) {
+                additional: [String: String] = [:], os: String = "iOS", isPad: Bool? = nil) {
         environment = WebPaywallEnvironmentConfiguration(
             language: language, deviceModel: deviceModel, country: country, appVersion: appVersion,
-            runtimeEnvironment: runtimeEnvironment
+            runtimeEnvironment: runtimeEnvironment, os: os, isPad: isPad
         )
         self.additional = additional
     }
@@ -27,7 +27,7 @@ public struct PaywallRequestParameters {
         guard country.isEmpty || (country.utf8.count == 3 && country.utf8.allSatisfy({ (65...90).contains($0) })) else {
             throw WebPaywallError.invalidDocument
         }
-        var standard = WebPaywallEnvironment.capture(country: country, configuration: environment).payload
+        var standard = WebPaywallEnvironment.capture(country: country, configuration: environment).payload.mapValues { String(describing: $0) }
         // 整份配置请求尚无当前点位；点位只在具体 H5 会话注入。
         standard.removeValue(forKey: "placement")
         // 扩展字段不能覆盖标准环境条件，避免路由条件在字典合并时被悄悄替换。
