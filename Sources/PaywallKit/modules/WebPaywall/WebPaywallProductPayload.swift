@@ -11,6 +11,7 @@ enum WebPaywallProductPayload {
             if let daily = product.dailyPriceText { value["dailyPriceText"] = daily }
             if let introductory = product.introductoryPriceText { value["introductoryPriceText"] = introductory }
             if let eligible = product.isEligibleForFreeTrial { value["isEligibleForFreeTrial"] = eligible }
+            if let pricing = product.subscriptionPricing { value["subscriptionPricing"] = pricing.payload }
             return value
         }
     }

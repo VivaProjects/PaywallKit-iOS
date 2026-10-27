@@ -45,3 +45,7 @@ PaywallLogging.mode = .enabled   // test、production 均输出
 开关线程安全，可在运行中调整，只影响之后的日志输出；不会改变请求环境、商品绑定或缓存身份。生命周期、查询和配置请求日志统一受控，前缀保留实际环境，例如 `[PaywallKit][production]`。在 Xcode 控制台筛选 `PaywallKit`，或在 macOS Console 中选择连接设备并按 subsystem `PaywallKit` 筛选。
 
 开启时包含配置请求和响应正文（不含请求头），用于排查的版本可开启，诊断结束后可切回 `.automatic` 或 `.disabled`。
+
+## 结构化商品价格
+
+支持两端共有的金额、币种、计费周期和适用收费阶段，见 [接入说明](protocol/SUBSCRIPTION_PRICING.md)。旧商品字段保持兼容。
