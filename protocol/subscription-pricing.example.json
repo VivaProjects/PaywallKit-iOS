@@ -1,0 +1,20 @@
+{
+  "phases": [
+    {
+      "priceAmount": "7.99",
+      "currencyCode": "EUR",
+      "displayPrice": "7,99 €",
+      "billingPeriod": "P1M",
+      "billingCycleCount": 1,
+      "recurrenceMode": "finiteRecurring"
+    },
+    {
+      "priceAmount": "19.99",
+      "currencyCode": "EUR",
+      "displayPrice": "19,99 €",
+      "billingPeriod": "P1M",
+      "billingCycleCount": 0,
+      "recurrenceMode": "infiniteRecurring"
+    }
+  ]
+}

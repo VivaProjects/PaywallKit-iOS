@@ -11,11 +11,14 @@ public struct PaywallStoreProduct: Identifiable {
     public let dailyPriceText: String?
     public let introductoryPriceText: String?
     public let isEligibleForFreeTrial: Bool?
+    public let subscriptionPricing: PaywallSubscriptionPricing?
     public var id: String { productRef }
 
     public init(productRef: String, storeProductID: String, title: String, displayPrice: String,
                 disclosure: String, periodText: String? = nil, dailyPriceText: String? = nil,
-                introductoryPriceText: String? = nil, isEligibleForFreeTrial: Bool? = nil) {
+                introductoryPriceText: String? = nil, isEligibleForFreeTrial: Bool? = nil,
+                subscriptionPricing: PaywallSubscriptionPricing? = nil) {
+        self.subscriptionPricing = subscriptionPricing
         self.productRef = productRef
         self.storeProductID = storeProductID
         self.title = title

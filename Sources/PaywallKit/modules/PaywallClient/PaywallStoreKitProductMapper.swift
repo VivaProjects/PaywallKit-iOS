@@ -26,7 +26,8 @@ public enum PaywallStoreKitProductMapper {
             disclosure: disclosure, periodText: periodText,
             dailyPriceText: includesDailyPrice ? dailyPrice(for: product) : nil,
             introductoryPriceText: eligibleOffer?.displayPrice,
-            isEligibleForFreeTrial: eligibleOffer?.paymentMode == .freeTrial
+            isEligibleForFreeTrial: eligibleOffer?.paymentMode == .freeTrial,
+            subscriptionPricing: try? PaywallStoreKitPricing.phases(product, eligibleOffer: eligibleOffer)
         )
     }
 
