@@ -4,7 +4,7 @@ import WebKit
 
 /// 管理页面声明商品后的查询、桥接握手和单次展示的取消边界。
 @MainActor
-final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
     private let document: WebPaywallDocument
     private let storefrontGroup: String
     private let environmentConfiguration: WebPaywallEnvironmentConfiguration
@@ -25,10 +25,10 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     private weak var webView: WKWebView?
     private var products: [String: PaywallStoreProduct] = [:]
     private var environment: WebPaywallEnvironment?
-    private var active = true
+    private(set) var active = true
     private var attached = false
     private var attachmentRevision = 0
-    private var bridgeReady = false
+    private(set) var bridgeReady = false
     private var bootstrapSent = false
     private var supportsDeferredProducts = false
     private var productsDelivered = false
@@ -41,7 +41,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     private var expectsRenderReady = false
     private var resourceTask: Task<Void, Never>?
     private var resourceLease: WebPaywallResourceLease?
-    private var loadedPageURL: URL?
+    private(set) var loadedPageURL: URL?
     private var productsTask: Task<Void, Never>?
     private var deadlineTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
@@ -180,8 +180,11 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
                 return
             }
             // 包缺失或校验失败只回到当前远端版本，不查找历史包。
-            let lease = try? await WebPaywallResourceCache.shared.prepare(
-                document: document, runtimeEnvironment: environmentConfiguration.runtimeEnvironment.rawValue)
+            let lease = try? await WebPaywallDiagnostics.measure(environmentConfiguration.runtimeEnvironment.rawValue,
+                "webview.resource", "session=\(sessionID) document=\(document.documentId)") {
+                try await WebPaywallResourceCache.shared.prepare(
+                    document: self.document, runtimeEnvironment: self.environmentConfiguration.runtimeEnvironment.rawValue)
+            }
             guard active, !Task.isCancelled else { return }
             trace("page.load", "source=\(lease == nil ? "remote" : "disk")")
             resourceLease = lease
@@ -222,7 +225,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
     }
 
     /// 故障只回退一次，拒绝之后到达的商品结果和桥接事件。
-    private func fail(_ reason: String = "invalid_state_or_protocol", kind: PaywallFailure = .bridge) {
+    func fail(_ reason: String = "invalid_state_or_protocol", kind: PaywallFailure = .bridge) {
         guard active else { return }
         trace("session.failed", "reason=\(reason)")
         stop()
@@ -297,7 +300,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
                 products[product.productRef] = product
             }
             trace("products.loaded", "matched=\(products.count) requested=\(requestedProductRefs?.count ?? 0)")
-            guard !products.isEmpty || !bridge.requiresStoreProducts else { fail("products_empty", kind: .productsUnavailable); return }
+            guard !products.isEmpty || (!bridge.requiresStoreProducts && !environmentConfiguration.waitsForProducts) else { fail("products_empty", kind: .productsUnavailable); return }
             bootstrapIfPossible()
         } catch {
             guard active, !Task.isCancelled else { return }
@@ -347,7 +350,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
             expectsRenderReady = (event["capabilities"] as? [String])?.contains("renderReady") == true
             guard !requiresRenderReady || expectsRenderReady else { fail(); return }
             expectsProductRequest = (event["capabilities"] as? [String])?.contains("productRequest") == true
-            supportsDeferredProducts = expectsProductRequest && expectsRenderReady
+            supportsDeferredProducts = !environmentConfiguration.waitsForProducts
+                && expectsProductRequest && expectsRenderReady
                 && (event["capabilities"] as? [String])?.contains("deferredProducts") == true
             sendContextIfPossible()
         case "productsRequest":
@@ -472,28 +476,4 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler, WKNavigatio
         }
     }
 
-    /// 保持现有来源限制，结束的会话禁止继续导航。
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        let allowed = active && (navigationAction.request.url.map { WebPaywallPageScripts.allows($0, expected: loadedPageURL) } ?? false)
-        trace("navigation.policy", "allowed=\(allowed)")
-        decisionHandler(allowed ? .allow : .cancel)
-    }
-
-    /// 完成握手后不允许主文档偷偷更换并复用旧商品会话。
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        trace("navigation.start")
-        if bridgeReady { fail("unexpected_navigation") }
-    }
-
-    /// 主文档加载失败立即回退。
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
-                 withError error: Error) { fail("navigation_code_\((error as NSError).code)", kind: .resource) }
-
-    /// 已开始的导航失败立即回退。
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!,
-                 withError error: Error) { fail("navigation_code_\((error as NSError).code)", kind: .resource) }
-
-    /// WebKit 进程终止时不能继续展示空白页面。
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { fail("web_process_terminated", kind: .resource) }
 }

@@ -29,7 +29,9 @@ public enum WebPaywallPackageLoader {
             throw WebPaywallError.invalidDocument
         }
         let url = pageURL.deletingLastPathComponent().appendingPathComponent("package.json")
-        let bytes = try await WebPaywallResourceDownload().fetch(url, limit: 256_000,
+        let transport = WebPaywallResourceDownload()
+        defer { transport.close() }
+        let bytes = try await transport.fetch(url, limit: 256_000,
                                                                deadline: Date().addingTimeInterval(15))
         let package = try JSONDecoder().decode(WebPaywallPackage.self, from: bytes)
         // 查询接口地址是实际发布位置，包内旧路径不参与下载与缓存身份。
@@ -40,10 +42,10 @@ public enum WebPaywallPackageLoader {
                                              developmentHTTPOrigin: localOrigin)
         let lease = try await WebPaywallResourceCache.shared.prepare(document: document,
                                                                     runtimeEnvironment: runtimeEnvironment,
-                                                                    downloadTimeout: 120)
+                                                                    downloadTimeout: 120, manifestData: bytes)
         try Task.checkCancellation()
-        _ = try WebPaywallDocument(packageDirectory: lease.readAccessURL, identity: identity,
-                                  environment: runtimeEnvironment, catalog: catalog)
+        // 来源和商品目录已由 document 校验；prepare 已完整校验清单及文件。
+        // 将同一租约交给归档，复制后的目标仍独立复验。
         return (document, lease)
     }
 }

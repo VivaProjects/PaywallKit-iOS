@@ -3,6 +3,7 @@ import WebKit
 
 /// 将一次 H5 加载会话绑定到 SwiftUI 的 WebView 生命周期。
 struct WebPaywallContainer: UIViewRepresentable {
+    @Environment(\.webPaywallDiagnosticFlow) private var diagnosticFlow
     @Environment(\.webPaywallSheetLayoutID) private var sheetLayoutID
     let document: WebPaywallDocument
     let storefrontGroup: String
@@ -39,6 +40,9 @@ struct WebPaywallContainer: UIViewRepresentable {
 
     /// 页面请求与商店查询同时启动，版本资源遵循 HTTP 缓存策略。
     func makeUIView(context: Context) -> WebPaywallViewportView {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { context.coordinator.trace("webview.configure", "durationMs=\(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))") }
+        context.coordinator.trace("flow.link", "flow=\(diagnosticFlow) presented=\(isPresented)")
         context.coordinator.setPresentationActive(isPresented)
         if let cached = webViewCache?.claim(coordinator: context.coordinator) {
             // claim 会恢复默认交互，内嵌隐藏宿主必须在 attach 前再次关闭。

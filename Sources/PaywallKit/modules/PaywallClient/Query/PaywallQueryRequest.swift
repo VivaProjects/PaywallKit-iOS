@@ -28,8 +28,12 @@ struct PaywallQueryRequest: Codable {
             throw WebPaywallError.invalidDocument
         }
         // 等待归因后采集商店国家，保持原始国家码。
-        let channel = try await attribution.resolve()
-        let country = await Storefront.current?.countryCode ?? ""
+        let channel = try await WebPaywallDiagnostics.measure(configuration.runtimeEnvironment.rawValue, "query.attribution") {
+            try await attribution.resolve()
+        }
+        let country = await WebPaywallDiagnostics.measure(configuration.runtimeEnvironment.rawValue, "query.storefront") {
+            await Storefront.current?.countryCode ?? ""
+        }
         try Task.checkCancellation()
         // 复用 H5 的具体硬件机型；首选语言不做翻译或大小写转换。
         let language = Locale.preferredLanguages.first ?? ""

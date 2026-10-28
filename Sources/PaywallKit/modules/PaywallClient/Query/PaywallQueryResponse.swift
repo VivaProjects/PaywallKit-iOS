@@ -84,46 +84,76 @@ struct PaywallQueryResponse: Decodable {
         return Batch(pages: pages, unmatched: selection.unmatched, failures: queue.failures)
     }
 
-    /// 单包失败只跳过关联点位，成功立即通知等待该点位的展示。
+    private struct PreparedPackage {
+        let request: PackageRequest
+        let document: WebPaywallDocument
+        let resource: WebPaywallResourceLease
+    }
+
+    /// 每个工作者只预取一个包，归档当前包时下一包可下载，结构化任务负责取消与释放。
     @MainActor
     private static func drain(_ queue: DownloadQueue, configuration: PaywallQueryConfiguration,
                               catalog: PaywallCatalog,
                               onPage: (@MainActor (Page) async throws -> Void)?) async throws -> [Page] {
-        var pages: [Page] = []
-        while let request = queue.next() {
-            try Task.checkCancellation()
-            let package: (WebPaywallDocument, WebPaywallResourceLease)
-            do {
-                package = try await PaywallQueryRetry.run(environment: configuration.runtimeEnvironment.rawValue, stage: "package") {
-                    try await configuration.waitUntilNetworkAvailable?()
-                    return try await WebPaywallPackageLoader.prepare(
-                        pageURL: request.url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
-                        allowedOrigins: configuration.allowedOrigins, catalog: catalog,
-                        developmentHTTPOrigin: configuration.developmentHTTPOrigin)
+        try await withThrowingTaskGroup(of: PreparedPackage?.self) { group in
+            if let request = queue.next() {
+                group.addTask { @MainActor in
+                    try await prepare(request, queue: queue, configuration: configuration, catalog: catalog)
                 }
-            } catch is CancellationError { throw CancellationError() }
-            catch {
-                queue.inFlight -= 1
-                queue.failures += 1
+            }
+            var pages: [Page] = []
+            while let outcome = try await group.next() {
                 try Task.checkCancellation()
-                for target in request.targets {
-                    WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue,
-                        "query.page_skipped", "placement=\(target.placement) error=\(error)")
+                // 网络槽与归档分开；成功额度仍在准备完成时串行计数，最多八个包。
+                if let request = queue.next() {
+                    group.addTask { @MainActor in
+                        try await prepare(request, queue: queue, configuration: configuration, catalog: catalog)
+                    }
                 }
-                continue
+                guard let package = outcome else { continue }
+                var targets = package.request.targets
+                while !targets.isEmpty {
+                    try Task.checkCancellation()
+                    let preferred = queue.preferredPlacement()
+                    let index = targets.firstIndex { $0.placement == preferred } ?? 0
+                    let target = targets.remove(at: index)
+                    let page = Page(placement: target.placement, document: package.document,
+                                    presentation: target.presentation, resource: package.resource)
+                    try await onPage?(page)
+                    pages.append(page)
+                }
             }
-            // MainActor 串行领取成功额度，并发完成也不会超过八个包。
-            queue.inFlight -= 1
-            queue.completed += 1
-            for target in request.targets {
-                try Task.checkCancellation()
-                let page = Page(placement: target.placement, document: package.0,
-                                presentation: target.presentation, resource: package.1)
-                try await onPage?(page)
-                pages.append(page)
-            }
+            return pages
         }
-        return pages
+    }
+
+    /// 下载错误只跳过关联包，取消与交付错误继续终止当前批次。
+    @MainActor
+    private static func prepare(_ request: PackageRequest, queue: DownloadQueue,
+                                configuration: PaywallQueryConfiguration,
+                                catalog: PaywallCatalog) async throws -> PreparedPackage? {
+        defer { queue.inFlight -= 1 }
+        do {
+            let package = try await PaywallQueryRetry.run(environment: configuration.runtimeEnvironment.rawValue, stage: "package") {
+                try await configuration.waitUntilNetworkAvailable?()
+                return try await WebPaywallPackageLoader.prepare(
+                    pageURL: request.url, runtimeEnvironment: configuration.runtimeEnvironment.rawValue,
+                    allowedOrigins: configuration.allowedOrigins, catalog: catalog,
+                    developmentHTTPOrigin: configuration.developmentHTTPOrigin)
+            }
+            try Task.checkCancellation()
+            queue.completed += 1
+            return PreparedPackage(request: request, document: package.0, resource: package.1)
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            queue.failures += 1
+            try Task.checkCancellation()
+            for target in request.targets {
+                WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue,
+                    "query.page_skipped", "placement=\(target.placement) error=\(error)")
+            }
+            return nil
+        }
     }
 
     /// 按首次出现顺序合并相同 URL，保留点位去重及各自展示方式。

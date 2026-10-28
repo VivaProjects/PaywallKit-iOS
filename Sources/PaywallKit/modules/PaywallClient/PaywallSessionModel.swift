@@ -26,6 +26,9 @@ final class PaywallSessionModel: ObservableObject {
     private var recovering = false
     private var hasLoaded = false
     private var selectedPlacement: PaywallPlacement?
+    private var loadStartedAt = ProcessInfo.processInfo.systemUptime
+    private var selectionMs = 0
+    private var hostPrepareMs = 0
     private var historyTask: Task<Void, Never>?
 
     /// 就绪页在首次 body 求值前同步接管，避免弹出动画出现一个空白加载帧。
@@ -55,12 +58,16 @@ final class PaywallSessionModel: ObservableObject {
     func load(client: PaywallClient, placement: String, resolved: PaywallPlacement?,
               cacheIdentity: AnyHashable, prepared: PaywallPreparedPage? = nil,
               prepare: @escaping (WebPaywallDocument) async throws -> PaywallSessionInput,
+              prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)? = nil,
               onEvent: @escaping (PaywallSessionEvent) -> Void) async {
         // 预渲染会话已同步接管，首次挂载不得再次查询商品或替换 WebView。
         if skipsInitialLoad { skipsInitialLoad = false; return }
         if prepared != nil { return }
         historyTask?.cancel()
         let token = UUID()
+        loadStartedAt = ProcessInfo.processInfo.systemUptime
+        selectionMs = 0
+        hostPrepareMs = 0
         generation = token
         recovering = false
         hasReportedReady = false
@@ -71,11 +78,24 @@ final class PaywallSessionModel: ObservableObject {
         hasLoaded = true
         fallbackContext = context
         var preparingInput = false
+        if let environment = client.diagnosticEnvironment {
+            WebPaywallDiagnostics.log(environment, "flow.selection.begin", "flow=\(token) placement=\(placement)")
+        }
         do {
             let selected = try await select(client: client, placement: placement, resolved: resolved, context: context)
+            try Task.checkCancellation()
+            guard generation == token else { return }
+            guard !client.isPlacementDisabled(placement) else { throw PaywallFailure.disabled }
+            selectionMs = Int((ProcessInfo.processInfo.systemUptime - loadStartedAt) * 1000)
             selectedPlacement = selected
             context.capture(selected)
+            if reuseCached(client: client, placement: placement, selected: selected,
+                cacheIdentity: cacheIdentity, prepareCached: prepareCached,
+                context: context, token: token, onEvent: onEvent) { return }
             preparingInput = true
+            if let environment = client.diagnosticEnvironment {
+                WebPaywallDiagnostics.log(environment, "flow.host_prepare.begin", "flow=\(token) placement=\(placement) selectionMs=\(selectionMs)")
+            }
             let input = try await prepareInput(selected.document, context: context, prepare: prepare)
             try Task.checkCancellation()
             guard generation == token else { return }
@@ -86,17 +106,39 @@ final class PaywallSessionModel: ObservableObject {
         } catch is CancellationError { return }
         catch {
             guard !Task.isCancelled, generation == token else { return }
+            if let environment = client.diagnosticEnvironment {
+                WebPaywallDiagnostics.log(environment, "flow.failed", "flow=\(token) placement=\(placement) hostPreparing=\(preparingInput) durationMs=\(Int((ProcessInfo.processInfo.systemUptime - loadStartedAt) * 1000)) code=\((error as NSError).code)")
+            }
             let failure = error as? PaywallFailure ?? (context.usesPreviousVersion && !preparingInput ? .resource : .eligibility)
             await recover(failure, client: client, placement: placement,
                           cacheIdentity: cacheIdentity, prepare: prepare, onEvent: onEvent)
         }
     }
 
+    /// 本地校验结束后继续复用就绪 WebView，宿主重新建立当前交易输入。
+    private func reuseCached(client: PaywallClient, placement: String, selected: PaywallPlacement,
+                             cacheIdentity: AnyHashable,
+                             prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)?,
+                             context: PaywallFallbackContext, token: UUID,
+                             onEvent: @escaping (PaywallSessionEvent) -> Void) -> Bool {
+        guard let prepareCached, let cached = client.preparedCachedPage(for: placement,
+            identity: cacheIdentity, resolved: selected, prepare: prepareCached) else { return false }
+        context.record(cached.input.document)
+        activate(input: cached.input, cache: cached.cache, token: token, onEvent: onEvent)
+        return true
+    }
+
     /// 首次消费宿主快照，重试继续当前降级分支。
     private func select(client: PaywallClient, placement: String, resolved: PaywallPlacement?,
                         context: PaywallFallbackContext) async throws -> PaywallPlacement {
         if client.isPlacementDisabled(placement) { throw PaywallFailure.disabled }
-        if context.local { return try context.localPlacement(clientID: client.id) }
+        try await context.prepareLaunchSelection()
+        if context.local {
+            if let resolved, let selected = try context.takeLocalPlacement(resolved, clientID: client.id) {
+                return selected
+            }
+            return try await context.localPlacement(clientID: client.id)
+        }
         if let previous = context.previousPlacement() { return previous }
         if let resolved, resolved.name == placement, resolved.clientID == client.id { return resolved }
         if context.store == nil {
@@ -109,6 +151,8 @@ final class PaywallSessionModel: ObservableObject {
     /// 只有主动点位受共享总期限限制，其他入口保持原有准备时序。
     private func prepareInput(_ document: WebPaywallDocument, context: PaywallFallbackContext,
                               prepare: @escaping (WebPaywallDocument) async throws -> PaywallSessionInput) async throws -> PaywallSessionInput {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { hostPrepareMs = Int((ProcessInfo.processInfo.systemUptime - started) * 1000) }
         guard context.store != nil else {
             return try await prepare(document).forPlacement(context.requestedPlacement)
         }
@@ -166,6 +210,8 @@ final class PaywallSessionModel: ObservableObject {
     private func activate(input: PaywallSessionInput, cache: WebPaywallWebViewCache?, token: UUID,
                           onEvent: @escaping (PaywallSessionEvent) -> Void) {
         generation = token
+        WebPaywallDiagnostics.log(input.environment.runtimeEnvironment.rawValue, "flow.prepared",
+            "flow=\(token) placement=\(selectedPlacement?.name ?? "") document=\(input.document.documentId) selectionMs=\(selectionMs) hostPrepareMs=\(hostPrepareMs) prepareMs=\(Int((ProcessInfo.processInfo.systemUptime - loadStartedAt) * 1000))")
         let bridge = PaywallSessionBridge(base: input.purchaseBridge, isActive: { [weak self] in
             self?.generation == token && self?.isClosing == false
         }, event: { [weak self] event in
@@ -185,6 +231,8 @@ final class PaywallSessionModel: ObservableObject {
                onEvent: (PaywallSessionEvent) -> Void) {
         guard generation == session.id, !hasReportedReady else { return }
         hasReportedReady = true
+        WebPaywallDiagnostics.log(session.input.environment.runtimeEnvironment.rawValue, "flow.render_observed",
+            "flow=\(session.id) placement=\(selectedPlacement?.name ?? "") document=\(session.input.document.documentId) totalMs=\(Int((ProcessInfo.processInfo.systemUptime - loadStartedAt) * 1000))")
         if let selectedPlacement {
             historyTask?.cancel()
             historyTask = Task {

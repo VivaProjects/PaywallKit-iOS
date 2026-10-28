@@ -1,50 +1,45 @@
 import Foundation
 
-/// SDK 全局诊断开关，与请求、商品和缓存使用的运行环境独立。
+/// SDK 自动保存日志；开关只控制控制台打印，不影响记录与诊断回调。
 public enum PaywallLogging {
-    public enum Mode: Sendable {
-        /// 保持默认行为：仅 test 环境输出日志。
-        case automatic
-        /// 所有运行环境均输出日志。
-        case enabled
-        /// 所有运行环境均关闭日志。
-        case disabled
-    }
-
+    /// 兼容旧调用：automatic 和 disabled 均不打印，所有模式均自动记录。
+    public enum Mode: Sendable { case automatic, enabled, disabled }
     private static let storage = Storage()
+    private static let logs = PaywallLogStore()
 
-    /// 线程安全地读取或设置日志模式；建议在创建 Client 前配置。
-    public static var mode: Mode {
+    /// 默认不打印；日志在 test 与 production 中均独立保存。
+    public static var printsToConsole: Bool {
         get { storage.read() }
         set { storage.write(newValue) }
     }
 
-    /// 按显式模式判断输出权限，不改变任何业务环境配置。
-    static func isEnabled(for environment: String) -> Bool {
-        switch mode {
-        case .automatic: return environment == "test"
-        case .enabled: return true
-        case .disabled: return false
-        }
+    /// 保留源代码兼容；推荐使用布尔打印开关。
+    public static var mode: Mode {
+        get { printsToConsole ? .enabled : .disabled }
+        set { printsToConsole = newValue == .enabled }
     }
 
-    /// 所有可变状态均由锁保护，允许网络任务与宿主并发读写。
+    static func isEnabled(for environment: String) -> Bool { printsToConsole }
+    static func record(_ line: String) { logs.append(line) }
+
+    /// 等待已有写入并按时间顺序读取日志，关闭打印也可分析。
+    public static func read() async -> String { await logs.read() }
+
+    /// 返回可分享的私有日志快照，不自动上传或发送。
+    public static func export() async throws -> URL { try await logs.export() }
+
+    /// 清理已保存日志，之后的新日志仍自动记录。
+    public static func clear() async throws { try await logs.clear() }
+
+    /// 打印配置由锁保护，与串行磁盘队列互不阻塞。
     private final class Storage: @unchecked Sendable {
         private let lock = NSLock()
-        private var value: Mode = .automatic
-
-        /// 在锁内读取当前模式。
-        func read() -> Mode {
-            lock.lock()
-            defer { lock.unlock() }
-            return value
+        private var value = false
+        func read() -> Bool {
+            lock.lock(); defer { lock.unlock() }; return value
         }
-
-        /// 在锁内更新当前模式。
-        func write(_ mode: Mode) {
-            lock.lock()
-            defer { lock.unlock() }
-            value = mode
+        func write(_ value: Bool) {
+            lock.lock(); defer { lock.unlock() }; self.value = value
         }
     }
 }

@@ -24,7 +24,11 @@ public enum PaywallCacheMaintenance {
             let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("PaywallKit", isDirectory: true)
             if FileManager.default.fileExists(atPath: root.path) {
-                try FileManager.default.removeItem(at: root)
+                // 页面缓存清理保留独立诊断记录，日志仅由 PaywallLogging.clear 清理。
+                for child in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                    where child.lastPathComponent != "Diagnostics" {
+                    try FileManager.default.removeItem(at: child)
+                }
             }
             for key in defaults.dictionaryRepresentation().keys
                 where key.hasPrefix("paywall.configuration.v1.") || key.hasPrefix("paywall.configuration.v2.") {
@@ -33,7 +37,7 @@ public enum PaywallCacheMaintenance {
             defaults.removeObject(forKey: resetKey)
         } catch {
             // 保留标记，下次启动继续尝试；不得误报清理成功。
-            NSLog("[PaywallKit] Startup cache cleanup failed: %@", error.localizedDescription)
+            WebPaywallDiagnostics.log("sdk", "maintenance.cleanup_failed", "code=\((error as NSError).code)")
         }
     }()
 }

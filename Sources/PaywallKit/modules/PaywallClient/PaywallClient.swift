@@ -65,7 +65,26 @@ public final class PaywallClient {
         return PaywallFallbackContext(placement: placement, store: store,
             usesPreviousVersion: previousVersionPlacements.contains(placement),
             startsLocally: queryRuntime?.cachedPlacement(placement) == nil,
-            cachedFallback: queryRuntime?.fallbackAtLaunch)
+            cachedFallback: queryRuntime?.fallbackAtLaunch,
+            prepareLaunch: queryRuntime.flatMap { runtime -> (() async throws -> Bool)? in
+                guard !runtime.hasRestored(placement) else { return nil }
+                return { [weak runtime] in
+                    try await runtime?.restorePlacement(placement)
+                    return runtime?.cachedPlacement(placement) != nil
+                }
+            })
+    }
+
+    /// 展示容器和本地分支选择前只等待所需启动快照，不触发网络。
+    func restoreLaunchPlacement(_ placement: String) async throws {
+        queryRuntime?.prioritize(placement)
+        try await queryRuntime?.restorePlacement(placement)
+    }
+
+    /// 兜底需要时再恢复其启动版本，普通点位无需提前等待其他资源。
+    func launchFallback(_ placement: String) async throws -> PaywallPlacement? {
+        try await restoreLaunchPlacement(placement)
+        return queryRuntime?.fallbackAtLaunch
     }
 
     /// 可见展示优先排队下载，普通预加载不改变优先级。
@@ -76,7 +95,12 @@ public final class PaywallClient {
     /// 查询模式展示最多等待三秒，超时沿用本地兜底；共享后台更新继续运行。
     func resolveForPresentation(_ placement: String, context: PaywallFallbackContext) async throws -> PaywallPlacement {
         if isPlacementDisabled(placement) { throw PaywallFailure.disabled }
-        if context.local { return try context.localPlacement(clientID: id) }
+        try await context.prepareLaunchSelection()
+        if context.local {
+            let selected = try await context.localPlacement(clientID: id)
+            guard !isPlacementDisabled(placement) else { throw PaywallFailure.disabled }
+            return selected
+        }
         do {
             // 仅展示等待有期限，普通预加载仍等待共享查询完成。
             guard var selected = try await resolveForEntry(placement) else { throw PaywallFailure.missingPlacement }
@@ -102,6 +126,7 @@ public final class PaywallClient {
         return try await resolve(placement)
     }
 
+    var diagnosticEnvironment: String? { source.diagnosticEnvironment }
     private var queryRuntime: PaywallQueryRuntime?
     private let source: PaywallConfigurationSource
     private let retainedPlacements: Set<String>
@@ -230,13 +255,14 @@ public final class PaywallClient {
                             prepare: (WebPaywallDocument) throws -> PaywallSessionInput) -> PaywallPreparedPage? {
         guard !isPlacementDisabled(placement), let variants = pages[placement],
               variants.first?.identity == identity else { return nil }
-        // 优先使用宿主已冻结的版本；无宿主时本地点位直接读取本地包，不依赖远端配置。
+        // 优先使用宿主已验证的冻结版本；未解析本地点位交给异步路径，避免同步读取文件。
         let context = makeFallbackContext(placement)
         let selected: PaywallPlacement?
         if let resolved, resolved.name == placement, resolved.clientID == id {
             selected = resolved
         } else if context.local {
-            selected = try? context.localPlacement(clientID: id)
+            // 未提供已验证快照的本地入口走异步选择，不能在 View 初始化时读整包。
+            selected = nil
         } else {
             selected = cachedPlacement(placement)
         }

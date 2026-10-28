@@ -69,6 +69,7 @@ public struct PaywallCachedPreloadView: View {
         do {
             // 本地点位与正式展示使用同一包；不能预热远端页面再展示本地版本。
             let context = client.makeFallbackContext(placement)
+            try await context.prepareLaunchSelection()
             let selected: PaywallPlacement
             if context.local {
                 selected = try await client.resolveForPresentation(placement, context: context)
@@ -103,9 +104,8 @@ public struct PaywallCachedPreloadView: View {
     /// 只卸下隐藏容器；缓存交由 Client 持有，不销毁已经被正式页面接管的网页。
     private func finish(_ prepared: PaywallPreparedPage) {
         guard page === prepared else { return }
-        #if DEBUG
-        print("[PaywallPreload] placement=\(placement) ready=\(prepared.isReady)")
-        #endif
+        WebPaywallDiagnostics.log(prepared.input.environment.runtimeEnvironment.rawValue,
+                                  "preload.finished", "placement=\(placement) ready=\(prepared.isReady)")
         page = nil
     }
 }

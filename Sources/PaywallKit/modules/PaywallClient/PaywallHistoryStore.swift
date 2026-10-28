@@ -7,6 +7,7 @@ actor PaywallHistoryStore {
         let snapshot: PaywallHistorySnapshot
         let identity: WebPaywallPackage.Document
         let lease: WebPaywallResourceLease
+        let document: WebPaywallDocument
     }
 
     private struct Record: Codable {
@@ -18,8 +19,8 @@ actor PaywallHistoryStore {
     private let root: URL
     private var leases: [String: Int] = [:]
 
-    init() {
-        root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    init(directory: URL? = nil) {
+        root = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PaywallKit/SuccessfulVersions", isDirectory: true)
     }
 
@@ -58,7 +59,7 @@ actor PaywallHistoryStore {
 
     /// 只尝试同文档最近一个更低版本；校验失败交由上层进入 Settings。
     func previous(_ snapshot: PaywallHistorySnapshot, placement: String,
-                  document: WebPaywallDocument) throws -> Candidate? {
+                  document: WebPaywallDocument) async throws -> Candidate? {
         guard let revision = document.revision else { return nil }
         let group = snapshot.key(placement: placement, documentID: document.documentId)
         let directory = root.appendingPathComponent(group)
@@ -68,12 +69,14 @@ actor PaywallHistoryStore {
         guard record.snapshot.key(placement: placement, documentID: document.documentId) == group,
               validDirectory(record.directory) else { throw PaywallFailure.resource }
         let package = directory.appendingPathComponent(record.directory)
-        try WebPaywallPackage.verify(package, identity: record.identity, environment: snapshot.environment)
-        try Task.checkCancellation()
         let key = group + "/" + record.directory
         leases[key, default: 0] += 1
         let lease = WebPaywallResourceLease(directory: package) { Task { await self.release(key, group: group) } }
-        return Candidate(snapshot: record.snapshot, identity: record.identity, lease: lease)
+        // 先持有租约再离开 actor，后台验证期间记录清理不能删除候选目录。
+        let document = try await WebPaywallLocalDocumentLoader.load(directory: package,
+            identity: record.identity, environment: snapshot.environment,
+            catalog: PaywallCatalog(productRefs: record.identity.productRefs, recommendedRef: record.identity.initialProductRef))
+        return Candidate(snapshot: record.snapshot, identity: record.identity, lease: lease, document: document)
     }
 
     /// 独立目录排除系统备份，目录名只接受内容摘要。

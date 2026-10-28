@@ -10,6 +10,8 @@ final class PaywallQueryRuntime {
     private weak var client: PaywallClient?
     private var activeIdentity: String?
     private var activePlacements: [String: PaywallPlacement] = [:]
+    private var restoreTask: Task<Void, Never>?
+    private var restoredPlacements: Set<String> = []
     private var queryTask: Task<Void, Error>?
     private var queryFinished = false
     private var unavailablePlacements: Set<String> = []
@@ -29,7 +31,7 @@ final class PaywallQueryRuntime {
         snapshots = PaywallQuerySnapshotStore(configuration: configuration)
     }
 
-    deinit { queryTask?.cancel() }
+    deinit { queryTask?.cancel(); restoreTask?.cancel() }
 
     /// 通用来源仅用于历史校验和精确身份的旧缓存迁移，不改变自定义来源策略。
     func source() -> PaywallConfigurationSource {
@@ -44,19 +46,50 @@ final class PaywallQueryRuntime {
             request: { try await self.request() })
     }
 
-    /// 在任何入口读取展示方式前恢复缓存；后台查询不会重新绑定当前兜底仓库。
+    /// 绑定后异步恢复启动缓存，初始化不再同步读取所有资源。
     func attach(to client: PaywallClient) {
         self.client = client
-        for candidate in snapshots.restore() {
-            do {
-                let selected = try candidate.snapshot.resolve(using: configuration, catalog: catalog(),
-                                                              clientID: client.id, lease: candidate.lease)
-                activePlacements[selected.name] = selected
-                trace("query.cache_restored", "placement=\(selected.name) revision=\(selected.document.revision ?? 0)")
-            } catch { trace("query.cache_invalid", "placement=\(candidate.snapshot.placement)") }
-        }
-        fallbackAtLaunch = configuration.fallback.flatMap { activePlacements[$0.placement] }
         installBundledFallback(on: client)
+        startRestore()
+    }
+
+    /// 同步读取恢复状态，已完成的本地入口可继续直接复用预热页面。
+    func hasRestored(_ placement: String) -> Bool { restoredPlacements.contains(placement) }
+
+    /// 当前点位独立等待完整校验，不被其他点位资源读取阻塞。
+    func restorePlacement(_ placement: String) async throws {
+        if restoredPlacements.contains(placement) { return }
+        let candidate = await WebPaywallDiagnostics.measure(configuration.runtimeEnvironment.rawValue,
+            "snapshot.restore", "query=\(diagnosticID) placement=\(placement)") {
+            await snapshots.restore(placement, catalog: catalog())
+        }
+        try Task.checkCancellation()
+        guard !restoredPlacements.contains(placement) else { return }
+        restoredPlacements.insert(placement)
+        guard let candidate, let client else { return }
+        do {
+            let selected = try candidate.snapshot.resolve(using: configuration, catalog: catalog(),
+                clientID: client.id, lease: candidate.lease, localDocument: candidate.document)
+            activePlacements[selected.name] = selected
+            if selected.name == configuration.fallback?.placement { fallbackAtLaunch = selected }
+            trace("query.cache_restored", "placement=\(selected.name) revision=\(selected.document.revision ?? 0)")
+            progressObservers.values.forEach { $0.yield(()) }
+        } catch { trace("query.cache_invalid", "placement=\(placement)") }
+    }
+
+    /// 剩余点位后台恢复；优先级仅改变未开始的工作，不改变启动版本选择。
+    private func startRestore() {
+        guard restoreTask == nil else { return }
+        let snapshots = self.snapshots
+        restoreTask = Task { [weak self] in
+            var pending = await snapshots.restoreNames()
+            while !pending.isEmpty && !Task.isCancelled {
+                guard let self else { return }
+                let index = self.preferredPlacement.flatMap { pending.firstIndex(of: $0) } ?? 0
+                let name = pending.remove(at: index)
+                try? await self.restorePlacement(name)
+            }
+        }
     }
 
     /// 有缓存立即返回；无缓存只等首个完整点位，不阻塞于剩余后台下载。
@@ -67,6 +100,8 @@ final class PaywallQueryRuntime {
 
     /// 缺失点位只等自身就绪，关闭入口不取消唯一后台更新。
     func resolve(_ placement: String, presentation: Bool = false) async throws -> PaywallPlacement? {
+        preferredPlacement = placement
+        try await restorePlacement(placement)
         _ = startQuery()
         try await waitForPlacement(placement, presentation: presentation)
         return activePlacements[placement]
@@ -163,7 +198,9 @@ final class PaywallQueryRuntime {
     /// 联网后仅采集一次请求条件，离线等待不消耗归因期限或覆盖启动快照。
     private func request() async throws -> URLRequest {
         // 网络状态未知或离线时挂起唯一任务，已有点位仍可直接使用缓存。
-        try await configuration.waitUntilNetworkAvailable?()
+        try await WebPaywallDiagnostics.measure(configuration.runtimeEnvironment.rawValue, "query.network_wait") {
+            try await configuration.waitUntilNetworkAvailable?()
+        }
         try Task.checkCancellation()
         // 首次联网后才开始等待归因，避免离线期间耗尽五秒窗口。
         let request = try await PaywallQueryRequest.request(configuration: configuration, attribution: attribution)
@@ -175,9 +212,13 @@ final class PaywallQueryRuntime {
 
     /// 唯一查询补齐缺失点位，已有点位的新结果仅写入下次启动索引。
     private func update() async throws {
-        let request = try await request()
-        await migrateLegacy(request)
-        let bytes = try await queryBytes(request)
+        // 请求与恢复重叠；冻结完成前不应用网络结果或迁移持久指针。
+        let (request, bytes) = try await PaywallQueryStartup.load(
+            restore: { await self.restoreTask?.value },
+            prepare: { try await self.request() },
+            fetch: { try await self.queryBytes($0) },
+            frozen: { await self.migrateLegacy($0) })
+        let archiveBatch = PaywallQueryArchiveBatch()
         var failures = 0
         var updatedPlacements = 0
         // 每个完整包立即归档，已完成点位不再等待其余包。
@@ -186,7 +227,7 @@ final class PaywallQueryRuntime {
             onUnavailable: { self.markUnavailable($0) }) { page in
             do {
                 let changed = try self.requiresUpdate(page)
-                try await self.accept(page, request: request)
+                try await self.accept(page, request: request, batch: archiveBatch)
                 if changed { updatedPlacements += 1 }
             }
             catch is CancellationError { throw CancellationError() }
@@ -196,7 +237,7 @@ final class PaywallQueryRuntime {
             }
         }
         try Task.checkCancellation()
-        do { try snapshots.remove(batch.unmatched) }
+        do { try await snapshots.remove(batch.unmatched) }
         catch {
             failures += 1
             trace("query.snapshot_failed", "operation=remove_unmatched")
@@ -214,14 +255,15 @@ final class PaywallQueryRuntime {
     }
 
     /// 先校验再提交，当前已有版本绝不被后台结果替换。
-    private func accept(_ page: PaywallQueryResponse.Page, request: URLRequest) async throws {
+    private func accept(_ page: PaywallQueryResponse.Page, request: URLRequest,
+                        batch: PaywallQueryArchiveBatch? = nil) async throws {
         guard let client, let body = request.httpBody else { throw CancellationError() }
         let snapshot = PaywallQuerySnapshot(placement: page.placement,
             requestIdentity: PaywallQueryRequest.identity(request, namespace: configuration.cacheScope), requestBody: body,
             configuration: try PaywallQueryResponse.configurationData(placement: page.placement,
                 document: page.document, presentation: page.presentation), identity: try WebPaywallPackage.identity(page.document))
-        let candidate = try await snapshots.save(snapshot, resource: page.resource)
-        let selected = try snapshot.resolve(using: configuration, catalog: catalog(), clientID: client.id, lease: candidate.lease)
+        let candidate = try await snapshots.save(snapshot, resource: page.resource, batch: batch)
+        let selected = try snapshot.resolve(using: configuration, catalog: catalog(), clientID: client.id, lease: candidate.lease, localDocument: candidate.document)
         trace("query.cache_staged", "placement=\(page.placement) revision=\(page.document.revision ?? 0)")
         // 超时走兜底的点位保持冻结，迟到包只供下次冷启动使用。
         if activePlacements[page.placement] == nil, !deferredPlacements.contains(page.placement) {
@@ -274,14 +316,15 @@ final class PaywallQueryRuntime {
         }
     }
 
-    /// 日志实际开启时只报告最终结果，中间重试与取消不弹提示。
+    /// 只报告最终结果，控制台打印开关不影响诊断回调。
     private func report(_ diagnostic: PaywallQueryUpdateDiagnostic) {
-        guard PaywallLogging.isEnabled(for: configuration.runtimeEnvironment.rawValue) else { return }
         configuration.onUpdateDiagnostic?(diagnostic)
     }
 
     /// 记录缓存阶段及点位。
+    private let diagnosticID = UUID().uuidString
+
     private func trace(_ event: String, _ detail: String) {
-        WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue, event, detail)
+        WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue, event, "query=\(diagnosticID) \(detail)")
     }
 }

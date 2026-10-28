@@ -28,7 +28,7 @@ xcodebuild -scheme PaywallKit \
 - 已有 v1 快照收到 v2 后仍保持 v1，新 Client 恢复 v2。
 - 相同发布身份与展示方式返回更新数 0；空响应返回 0。
 - 单包失败与部分成功分别报告正确计数，不误报全部成功。
-- disabled 不回调提示；automatic 仅 test 开启，enabled 可在 production 开启。
+- 打印开关不影响更新诊断回调；SDK 默认记录，关闭打印仍可读取或导出。
 - 取消入口不取消后台任务；取消退避不继续重试；校验错误与不可恢复 HTTP 不重试。
 
 测试验证的是 SDK 诊断事件及生命周期，不等于四类 Toast 均已做视觉验收，也不包含真机 StoreKit 购买、真实蜂窝弱网、iOS 16–25 或 iOS 26 真机视觉与交互验收。

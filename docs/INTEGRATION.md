@@ -133,7 +133,7 @@ SDK 通过 `track` 回调输出固定事件及文档版本，宿主转发现有�
 
 ## 测试环境诊断日志
 
-iOS 默认仅在 `runtimeEnvironment: test` 时输出日志，与 Debug/Release 编译模式无关。SDK 0.2.0 起可在创建 Client 前设置 `PaywallLogging.mode = .enabled`，独立开启 production 日志；`.disabled` 全部关闭，`.automatic` 恢复默认行为。开关不修改运行环境。iOS 使用系统日志（subsystem `PaywallKit`、category `Lifecycle`），搜索 `[PaywallKit][production]` 或 `[PaywallKit][test]`，包括配置请求与响应正文，不包含请求头。Flutter 仍按其 SDK 的测试环境规则输出到运行控制台。
+SDK 默认独立保存日志，`PaywallLogging.printsToConsole` 默认为 `false`，只控制控制台打印。关闭打印仍可调用 `read()` / `export()`，`clear()` 清理现存日志。旧模式 `enabled` 打印，`automatic` / `disabled` 不打印，均保留记录和更新诊断回调。不改变业务环境，也不记录原始配置请求和响应正文。容量和真机采集方法见 [耗时诊断](LOAD_TIMING.md)。
 
 - `preload.*` / `prepared_page.*`：准备、复用、就绪、接管、取消、超时及失败。
 - `cache.*`：WebView 缓存命中、身份不匹配、挂载接管、保留、释放和清理。

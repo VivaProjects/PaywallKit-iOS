@@ -101,6 +101,29 @@ public struct WebPaywallDocument {
                   initialProductRef: identity.initialProductRef, localReadAccessURL: packageDirectory)
     }
 
+    /// 归档完整复验后仅通过原子改名交接同一批文件，不再次读取整包。
+    /// 只供 SDK 私有仓库在持有目标租约期间调用。
+    func relocatingVerifiedPackage(to directory: URL) throws -> WebPaywallDocument {
+        guard localReadAccessURL != nil, directory.isFileURL else {
+            throw WebPaywallError.invalidDocument
+        }
+        return WebPaywallDocument(documentId: documentId, revision: revision,
+            pageURL: directory.appendingPathComponent("offline.html"), catalogKey: catalogKey,
+            productRefs: productRefs, initialProductRef: initialProductRef,
+            localReadAccessURL: directory)
+    }
+
+    /// 资源仓库刚完成同身份验证并持有租约时，将远端描述绑定到该目录。
+    /// 不公开给宿主，也不用于外部目录、跨展示或跨环境复用。
+    func usingPreparedResources(_ lease: WebPaywallResourceLease) throws -> WebPaywallDocument {
+        guard localReadAccessURL == nil, lease.readAccessURL.isFileURL else {
+            throw WebPaywallError.invalidDocument
+        }
+        return WebPaywallDocument(documentId: documentId, revision: revision,
+            pageURL: lease.pageURL, catalogKey: catalogKey, productRefs: productRefs,
+            initialProductRef: initialProductRef, localReadAccessURL: lease.readAccessURL)
+    }
+
     public static func origin(of url: URL) -> String {
         let port = url.port.map { ":\($0)" } ?? ""
         return "\(url.scheme ?? "")://\(url.host ?? "")\(port)"

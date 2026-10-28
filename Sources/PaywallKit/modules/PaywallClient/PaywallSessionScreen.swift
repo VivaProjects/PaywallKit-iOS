@@ -17,6 +17,7 @@ struct PaywallSessionScreen: View {
     let canDismiss: () -> Bool
     let copy: PaywallRuntimeCopy
     let prepare: (WebPaywallDocument) async throws -> PaywallSessionInput
+    let prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)?
     let openLegal: (PaywallHost.LegalRoute) -> Void
     let onEvent: (PaywallSessionEvent) -> Void
 
@@ -38,6 +39,7 @@ struct PaywallSessionScreen: View {
         self.canDismiss = canDismiss
         self.copy = copy
         self.prepare = prepare
+        self.prepareCached = prepareCached
         self.openLegal = openLegal
         self.onEvent = onEvent
         _model = StateObject(wrappedValue: PaywallSessionModel(
@@ -70,7 +72,7 @@ struct PaywallSessionScreen: View {
             if isPresented { client.prioritizePresentation(placement) }
             await model.load(client: client, placement: placement, resolved: resolvedPlacement,
                              cacheIdentity: cacheIdentity, prepared: retryGeneration == 0 ? preparedPage : nil,
-                             prepare: prepare, onEvent: onEvent)
+                             prepare: prepare, prepareCached: prepareCached, onEvent: onEvent)
         }
         .onChange(of: validityIdentity) { _ in
             recoveryTask?.cancel()
@@ -107,6 +109,7 @@ struct PaywallSessionScreen: View {
         ) {
             statusView(error: copy.unavailable)
         }
+        .environment(\.webPaywallDiagnosticFlow, session.id.uuidString)
         .id(session.id)
         .ignoresSafeArea(.container, edges: .all)
     }

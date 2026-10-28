@@ -184,7 +184,12 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
         }
         // 主动入口先提交容器，配置、商品和网页加载由内部会话统一维护。
         if shouldPresentImmediately(value) {
-            presentImmediately(value)
+            do {
+                if let key = placement(value) { try await client.restoreLaunchPlacement(key) }
+                try Task.checkCancellation()
+                guard hasRequest, item?.id == value.id else { return }
+                try await presentImmediately(value)
+            } catch { return }
             return
         }
         do {
@@ -210,18 +215,23 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
     }
 
     /// 主动入口冻结已知展示方式；缺少配置时本次保持全屏，避免加载后再次弹出。
-    private func presentImmediately(_ value: Item) {
+    private func presentImmediately(_ value: Item) async throws {
         guard canPresentPrepared() else { finish(); return }
         // 已明确禁用的点位仍直接消费请求，不先闪现加载页。
+        let selected: PaywallPlacement?
         if let key = placement(value) {
             guard !client.isPlacementDisabled(key) else { finish(); return }
             let context = client.makeFallbackContext(key)
-            resolvedPlacement = context.local
-                ? try? context.localPlacement(clientID: client.id)
+            selected = context.local
+                ? try? await context.localPlacement(clientID: client.id)
                 : client.cachedPlacement(key)
+            guard !client.isPlacementDisabled(key) else { finish(); return }
         } else {
-            resolvedPlacement = nil
+            selected = nil
         }
+        try Task.checkCancellation()
+        guard hasRequest, item?.id == value.id, canPresentPrepared() else { return }
+        resolvedPlacement = selected
         // 只在提交前确定一次容器；内部解析不得切换已展示的全屏、Sheet 或 Push。
         mode = resolvedPlacement?.presentation ?? .fullScreen
         hasCommittedPresentation = true

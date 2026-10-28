@@ -51,6 +51,8 @@ public final class PaywallLocalPackageStore {
     private var state = State()
     private var lastCheck: Date?
     private var checking = false
+    private var cleanupTask: Task<Void, Never>?
+    private var beforeCleanup: (@Sendable () async -> Void)?
 
     public init(placement: String, fallbackPlacements: Set<String>, bundledDirectory: URL,
                 updateURL: URL? = nil, runtimeEnvironment: String, allowedOrigins: Set<String>?,
@@ -72,6 +74,25 @@ public final class PaywallLocalPackageStore {
         restoreState()
     }
 
+    /// 集成测试使用独立私有目录，仍走生产状态恢复、目录边界和完整校验。
+    init(placement: String, bundledDirectory: URL, directory: URL,
+         environment: String, beforeCleanup: (@Sendable () async -> Void)? = nil,
+         catalog: @escaping () -> PaywallCatalog) {
+        self.placement = placement
+        fallbackPlacements = []
+        self.bundledDirectory = bundledDirectory
+        updateURL = nil
+        self.environment = environment
+        origins = nil
+        developmentHTTPOrigin = nil
+        self.catalog = catalog
+        root = directory
+        self.beforeCleanup = beforeCleanup
+        cache = WebPaywallResourceCache(directory: directory.appendingPathComponent("packages"),
+                                       capacityBytes: Int.max, downloadTimeout: 120)
+        restoreState()
+    }
+
     /// 只在创建仓库时清理历史目录，此时尚无展示会话持有它们。
     private func restoreState() {
         let file = root.appendingPathComponent("state.json")
@@ -79,43 +100,82 @@ public final class PaywallLocalPackageStore {
            let saved = try? JSONDecoder().decode(State.self, from: bytes) { state = saved }
         let kept = Set([state.current?.directory, state.previous?.directory].compactMap { $0 })
         let directory = root.appendingPathComponent("packages")
-        if let children = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
-            for child in children where !kept.contains(child.lastPathComponent) {
-                try? FileManager.default.removeItem(at: child)
-            }
+        let children = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        // 构造期间同步隔离旧目录；新下载随后只能创建新的原路径，后台删除不会碰到它。
+        let discarded = children.filter { !kept.contains($0.lastPathComponent) }
+            .compactMap { WebPaywallCacheMaintenance.quarantine($0) }
+        guard !discarded.isEmpty else { return }
+        let beforeCleanup = self.beforeCleanup
+        cleanupTask = Task.detached(priority: .utility) {
+            await beforeCleanup?()
+            for directory in discarded { _ = await WebPaywallCacheMaintenance.remove(directory) }
         }
     }
 
-    /// 读取本地冻结版本，打开页面绝不等待网络。
-    func selection(bundledOnly: Bool = false) throws -> (WebPaywallDocument, String) {
+    /// 冻结候选版本后后台校验；打开页面只等待磁盘，不等待网络。
+    func selection(bundledOnly: Bool = false) async throws -> (WebPaywallDocument, String, WebPaywallResourceLease) {
+        let records = [state.current, state.previous].compactMap { $0 }
         if !bundledOnly {
-            for record in [state.current, state.previous].compactMap({ $0 })
-                where !state.rejected.contains(record.update.version) {
-                if let document = try? localDocument(record) { return (document, "update") }
-                state.rejected.insert(record.update.version)
-                try? persist()
+            for record in records where !state.rejected.contains(record.update.version) {
+                do {
+                    let (document, lease) = try await localDocument(record)
+                    try Task.checkCancellation()
+                    // 后台工作期间另一会话可能拒绝此包，不能重新激活已拒绝版本。
+                    if state.rejected.contains(record.update.version) { continue }
+                    return (document, "update", lease)
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    try Task.checkCancellation()
+                    state.rejected.insert(record.update.version)
+                    try? persist()
+                }
             }
         }
-        guard let resources = Bundle.main.resourceURL?.resolvingSymlinksInPath(),
-              bundledDirectory.resolvingSymlinksInPath().path.hasPrefix(resources.path + "/") else {
-            throw PaywallFailure.resource
-        }
-        let bytes = try Data(contentsOf: bundledDirectory.appendingPathComponent("package.json"))
-        let package = try JSONDecoder().decode(WebPaywallPackage.self, from: bytes)
-        let document = try WebPaywallDocument(packageDirectory: bundledDirectory, identity: try package.identity(for: environment),
-                                             environment: environment, catalog: catalog())
-        return (document, "bundled")
+        let directory = bundledDirectory, environment = self.environment, catalog = self.catalog()
+        let document = try await WebPaywallLocalDocumentLoader.bundled(
+            directory: directory, resources: Bundle.main.resourceURL, environment: environment, catalog: catalog)
+        try validateCurrentCatalog(document)
+        return (document, "bundled", WebPaywallResourceLease(directory: directory, release: {}))
     }
 
-    /// 历史版本也重新校验环境、清单、目录与商品，不能借用新绑定。
-    private func localDocument(_ record: Record) throws -> WebPaywallDocument {
+    /// 历史版本仍验证环境、完整文件及当前宿主目录，不借用新版本绑定。
+    private func localDocument(_ record: Record) async throws -> (WebPaywallDocument, WebPaywallResourceLease) {
         guard record.directory.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
             throw PaywallFailure.resource
         }
-        return try WebPaywallDocument(
-            packageDirectory: root.appendingPathComponent("packages/\(record.directory)"),
+        let (document, lease) = try await cache.validatedLocal(directoryName: record.directory,
             identity: try identity(record.update), environment: environment, catalog: catalog())
+        try validateCurrentCatalog(document)
+        return (document, lease)
     }
+
+    /// 等待期间宿主目录可能收窄，交付前重新确认权限及任务存活。
+    func validateCurrentCatalog(_ document: WebPaywallDocument) throws {
+        try Task.checkCancellation()
+        let current = catalog()
+        guard document.productRefs.allSatisfy({ current.productRefs.contains($0) }) else {
+            throw WebPaywallError.invalidDocument
+        }
+    }
+
+    /// 同一次展示交接仅复用身份未改变的候选；跨展示和重试仍重新校验。
+    func canReuseSelection(_ document: WebPaywallDocument, source: String, bundledOnly: Bool) throws -> Bool {
+        try validateCurrentCatalog(document)
+        let candidate = [state.current, state.previous].compactMap { $0 }
+            .first { !state.rejected.contains($0.update.version) }
+        if source == "bundled" {
+            return document.localReadAccessURL == bundledDirectory && (bundledOnly || candidate == nil)
+        }
+        guard !bundledOnly, let candidate, source == "update" else { return false }
+        let expected = try identity(candidate.update)
+        return document.localReadAccessURL == root.appendingPathComponent("packages/\(candidate.directory)")
+            && document.documentId == expected.documentId && document.revision == expected.revision
+            && document.catalogKey == expected.catalogKey && document.productRefs == expected.productRefs
+            && document.initialProductRef == expected.initialProductRef
+    }
+
+    /// 测试和仓库所有者可以等待已隔离资源回收，正常页面选择无需等待。
+    func waitForCleanup() async { await cleanupTask?.value }
 
     /// 显式关闭与点位缺失分离，离线时保留上次成功发布的决定。
     func isDisabled(_ name: String) -> Bool { state.disabledPlacements.contains(name) }
@@ -163,10 +223,10 @@ public final class PaywallLocalPackageStore {
         state.policyVersion = update.version
         try persist()
         guard update.version > state.highestVersion, !state.rejected.contains(update.version) else { return }
-        let lease = try await cache.prepare(document: document, runtimeEnvironment: environment)
+        let (verified, lease) = try await cache.prepareLocal(document: document, environment: environment)
         try Task.checkCancellation()
-        _ = try WebPaywallDocument(packageDirectory: lease.readAccessURL, identity: selected,
-                                  environment: environment, catalog: catalog())
+        try validateCurrentCatalog(verified)
+        guard update.version > state.highestVersion, !state.rejected.contains(update.version) else { return }
         let old = state
         state.previous = [state.current, state.previous].compactMap { $0 }
             .first { !state.rejected.contains($0.update.version) }
@@ -183,12 +243,11 @@ public final class PaywallLocalPackageStore {
                                   catalog: catalog(), developmentHTTPOrigin: developmentHTTPOrigin)
         guard selected.revision > state.highestVersion,
               !state.rejected.contains(selected.revision) else { return }
-        let lease = try await cache.prepare(document: document, runtimeEnvironment: environment)
+        let (verified, lease) = try await cache.prepareLocal(document: document, environment: environment)
         try Task.checkCancellation()
-        _ = try WebPaywallDocument(packageDirectory: lease.readAccessURL, identity: selected,
-                                  environment: environment, catalog: catalog())
+        try validateCurrentCatalog(verified)
         // 同一版本并发返回时只提交一次，失败则恢复原来的可用指针。
-        guard selected.revision > state.highestVersion else { return }
+        guard selected.revision > state.highestVersion, !state.rejected.contains(selected.revision) else { return }
         let old = state
         let update = Update(formatVersion: 1, runtimeEnvironment: environment,
                             version: selected.revision, document: selected, documents: nil,

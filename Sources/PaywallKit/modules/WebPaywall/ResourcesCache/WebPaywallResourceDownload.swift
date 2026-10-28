@@ -1,7 +1,24 @@
 import Foundation
 
 /// 资源下载禁止重定向；文档来源已由宿主白名单验证。
-final class WebPaywallResourceDownload: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class WebPaywallResourceDownload: @unchecked Sendable {
+    private let delegate = WebPaywallDownloadDelegate()
+    private let session: URLSession
+
+    /// 独立包持有连接池；禁用响应缓存，重试及并发资源复用同一会话。
+    init() {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 120
+        session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+    }
+
+    deinit { close() }
+
+    /// 所有者结束整个包时关闭会话；单个调用者取消只结束对应数据任务。
+    func close() { session.invalidateAndCancel() }
+
     /// 仅对临时超时最多重试两次，所有尝试与退避共用调用方的整包截止时间。
     func fetch(_ url: URL, limit: Int, deadline: Date) async throws -> Data {
         var retries = 0
@@ -23,39 +40,24 @@ final class WebPaywallResourceDownload: NSObject, URLSessionTaskDelegate, @unche
         }
     }
 
-    /// 单次请求放宽等待上限，保留响应体限制、来源检查和独立资源释放。
+    /// 分块接收且逐块限制长度；绝对截止时间覆盖响应头和整个响应体。
     private func fetchAttempt(_ url: URL, limit: Int, deadline: Date) async throws -> Data {
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else { throw URLError(.timedOut) }
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = min(30, remaining)
-        config.timeoutIntervalForResource = remaining
-        let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        // 禁止使用不明版本的系统 HTTP 缓存。
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData,
                                  timeoutInterval: min(30, remaining))
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse,
-              http.url == url, response.expectedContentLength <= Int64(limit)
-        else { throw URLError(.badServerResponse) }
-        guard http.statusCode == 200 else { throw PaywallQueryRetry.HTTPFailure(status: http.statusCode) }
-        var result = Data()
-        for try await byte in bytes {
-            guard result.count < limit else { throw URLError(.dataLengthExceedsMaximum) }
-            if result.count % 8192 == 0, Date() >= deadline { throw URLError(.timedOut) }
-            result.append(byte)
+        let cancellation = WebPaywallDownloadCancellation()
+        let data: Data = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.dataTask(with: request)
+                delegate.register(task, url: url, limit: limit, deadline: deadline, continuation: continuation)
+                cancellation.install { [delegate] in delegate.cancel(task.taskIdentifier) }
+                task.resume()
+            }
+        } onCancel: {
+            cancellation.cancel()
         }
         try Task.checkCancellation()
-        guard Date() < deadline else { throw URLError(.timedOut) }
-        return result
-    }
-
-    /// 包内资源不得通过服务端跳转扩大来源或目录权限。
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
+        return data
     }
 }

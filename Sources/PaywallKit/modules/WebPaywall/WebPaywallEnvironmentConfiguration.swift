@@ -9,12 +9,14 @@ public struct WebPaywallEnvironmentConfiguration: Equatable {
     public let deviceModel: String?
     public let country: String?
     public let appVersion: String?
+    /// 为 true 时等待真实商品后初始化首屏；默认保留页面声明的延迟商品能力。
+    public let waitsForProducts: Bool
 
     /// 配置会话系统与设备信息，未指定平板类型时自动采集。
     public init(language: String? = nil, deviceModel: String? = nil,
                 country: String? = nil, appVersion: String? = nil,
                 runtimeEnvironment: WebPaywallRuntimeEnvironment = .test, placement: String = "",
-                os: String = "iOS", isPad: Bool? = nil) {
+                os: String = "iOS", isPad: Bool? = nil, waitsForProducts: Bool = false) {
         precondition(["iOS", "Android"].contains(os), "os must be iOS or Android")
         self.os = os
         self.isPad = isPad
@@ -24,11 +26,13 @@ public struct WebPaywallEnvironmentConfiguration: Equatable {
         self.deviceModel = deviceModel
         self.country = country
         self.appVersion = appVersion
+        self.waitsForProducts = waitsForProducts
     }
 
     /// 高层入口以实际点位覆盖调用方值，其他会话环境保持不变。
     func forPlacement(_ placement: String) -> Self {
         Self(language: language, deviceModel: deviceModel, country: country,
-             appVersion: appVersion, runtimeEnvironment: runtimeEnvironment, placement: placement, os: os, isPad: isPad)
+             appVersion: appVersion, runtimeEnvironment: runtimeEnvironment, placement: placement,
+             os: os, isPad: isPad, waitsForProducts: waitsForProducts)
     }
 }
