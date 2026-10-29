@@ -32,7 +32,7 @@ struct PaywallQueryRequest: Codable {
             try await attribution.resolve()
         }
         let country = await WebPaywallDiagnostics.measure(configuration.runtimeEnvironment.rawValue, "query.storefront") {
-            await Storefront.current?.countryCode ?? ""
+            await PaywallStoreCountry.resolve(environment: configuration.runtimeEnvironment)
         }
         try Task.checkCancellation()
         // 复用 H5 的具体硬件机型；首选语言不做翻译或大小写转换。

@@ -3,6 +3,7 @@ import Foundation
 /// 启动时冻结各点位缓存，唯一后台查询只补齐本次缺失并提交下次启动候选。
 @MainActor
 final class PaywallQueryRuntime {
+    private(set) var remoteUpdatesEnabled: Bool
     private let configuration: PaywallQueryConfiguration
     private let catalog: () -> PaywallCatalog
     private let attribution: PaywallQueryAttribution
@@ -26,6 +27,7 @@ final class PaywallQueryRuntime {
     /// 缓存范围由 SDK 隔离，宿主仍只提供声明和当前商品目录。
     init(configuration: PaywallQueryConfiguration, catalog: @escaping () -> PaywallCatalog) {
         self.configuration = configuration
+        remoteUpdatesEnabled = configuration.remoteUpdatesEnabled
         self.catalog = catalog
         attribution = PaywallQueryAttribution(namespace: configuration.cacheScope)
         snapshots = PaywallQuerySnapshotStore(configuration: configuration)
@@ -94,6 +96,11 @@ final class PaywallQueryRuntime {
 
     /// 有缓存立即返回；无缓存只等首个完整点位，不阻塞于剩余后台下载。
     func prepare() async throws {
+        guard remoteUpdatesEnabled else {
+            await restoreTask?.value
+            try Task.checkCancellation()
+            return
+        }
         _ = startQuery()
         try await waitForPlacement(nil)
     }
@@ -101,7 +108,9 @@ final class PaywallQueryRuntime {
     /// 缺失点位只等自身就绪，关闭入口不取消唯一后台更新。
     func resolve(_ placement: String, presentation: Bool = false) async throws -> PaywallPlacement? {
         preferredPlacement = placement
+        let shouldUpdate = remoteUpdatesEnabled
         try await restorePlacement(placement)
+        guard shouldUpdate else { return activePlacements[placement] }
         _ = startQuery()
         try await waitForPlacement(placement, presentation: presentation)
         return activePlacements[placement]
@@ -172,6 +181,12 @@ final class PaywallQueryRuntime {
     /// 迟到归因只保存给下次请求，不触发额外查询或替换已有点位。
     func reportAttribution(channel: String?, failed: Bool) { attribution.update(channel: channel, failed: failed) }
 
+    /// 首次授权立即启动后台更新，不失效当前配置、点位快照或网页缓存。
+    func enableRemoteUpdates() {
+        remoteUpdatesEnabled = true
+        _ = startQuery()
+    }
+
     /// 成功和失败任务都保留到运行时释放，关闭弹窗及前台恢复不重新查询。
     private func startQuery() -> Task<Void, Error> {
         if let queryTask { return queryTask }
@@ -197,6 +212,7 @@ final class PaywallQueryRuntime {
 
     /// 联网后仅采集一次请求条件，离线等待不消耗归因期限或覆盖启动快照。
     private func request() async throws -> URLRequest {
+        guard remoteUpdatesEnabled else { throw PaywallFailure.configuration }
         // 网络状态未知或离线时挂起唯一任务，已有点位仍可直接使用缓存。
         try await WebPaywallDiagnostics.measure(configuration.runtimeEnvironment.rawValue, "query.network_wait") {
             try await configuration.waitUntilNetworkAvailable?()

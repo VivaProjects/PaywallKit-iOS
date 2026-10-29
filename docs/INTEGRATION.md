@@ -170,3 +170,10 @@ H5 同时声明 `productRequest`、`renderReady`、`deferredProducts` 时，iOS 
 升级依赖到 `0.3.0`。SDK 向 H5 的 `custom` 平铺注入 `os`（`iOS` / `Android`）与 `isPad`（布尔值），POST 查询在 `conditions` 中传同名字段；GET 使用字符串查询参数。设备参数变化后需新建会话。
 
 SwiftPM：`.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.3.0")`。查询式入口自动采集 iOS 与 iPad 状态；会话配置可通过 `WebPaywallEnvironmentConfiguration(os: "iOS", isPad: true)` 显式覆盖。
+
+
+## 商店国家缓存兜底
+
+国家查询成功后保存最近一次有效的 ISO alpha-3 大写国家码；后续查询返回空值时读取缓存，无缓存才传空字符串。缓存按应用及 `runtimeEnvironment` 隔离，跨启动保留，不设置过期时间。新的成功结果覆盖旧值，失败不清空缓存。
+
+仅沿用既有单次商店查询，不新增网络请求、重试、延时窗口或同步落盘等待。缓存不能缩短商店调用本身的耗时；账户切换后若查询失败，可能暂时沿用旧国家。真实商品价格与资格仍由商店提供，不从缓存国家推断。

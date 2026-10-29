@@ -18,12 +18,11 @@ public struct PaywallRequestParameters {
         self.additional = additional
     }
 
-    /// 共用 H5 环境采集逻辑，国家仅从 StoreKit 获取，未知时传空字符串。
+    /// 共用 H5 环境采集逻辑，国家仅从 StoreKit 获取，失败时使用历史国家，无缓存时传空字符串。
     @MainActor
     private func values() async throws -> [String: String] {
-        let country: String
-        if let configured = environment.country { country = configured.uppercased() }
-        else { country = (await Storefront.current?.countryCode)?.uppercased() ?? "" }
+        let country = await PaywallStoreCountry.resolve(
+            configured: environment.country, environment: environment.runtimeEnvironment)
         guard country.isEmpty || (country.utf8.count == 3 && country.utf8.allSatisfy({ (65...90).contains($0) })) else {
             throw WebPaywallError.invalidDocument
         }

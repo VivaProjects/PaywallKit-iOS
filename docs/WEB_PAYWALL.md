@@ -26,7 +26,7 @@ H5 自行加载同版本的 `content.json` 并校验文案和展示绑定；原�
 
 H5 通过 `PaywallBridge.postMessage(JSON.stringify({type,...}))` 发送动作；原生调用 `window.PaywallRuntime.receive(...)`。`bootstrap` 仅包含 `type`、`bridgeVersion`、`sessionID`、受限的会话级 `custom` 和 `products`。商品以真实 ID 作为 `productRef` 匹配，展示价格、披露和宿主确认的资格；购买与恢复结果使用状态码，提示文案由 H5 维护。
 
-`custom` 平铺包含 `placement`、`os`、`isPad`、`language`、`deviceModel`、`country`、`appVersion`、`runtimeEnvironment`。国家必须来自商店账户，使用 ISO alpha-3 大写值，未知传空字符串；设备型号不能是设备唯一标识。iOS 可通过 `WebPaywallEnvironmentConfiguration` 单独覆盖字段，未配置字段使用 SDK 当前默认值；Flutter 由宿主提供环境对象。`custom` 不得包含或覆盖商店价格、披露或页面文案。环境、商品资格或 custom 改变后创建新会话，不复用旧 WebView 会话。
+`custom` 平铺包含 `placement`、`os`、`isPad`、`language`、`deviceModel`、`country`、`appVersion`、`runtimeEnvironment`。国家必须来自商店账户，使用 ISO alpha-3 大写值；获取成功即缓存，后续获取为空或失败时沿用最近成功值，无缓存才传空字符串；设备型号不能是设备唯一标识。iOS 可通过 `WebPaywallEnvironmentConfiguration` 单独覆盖字段，未配置字段使用 SDK 当前默认值；Flutter 由宿主提供环境对象。`custom` 不得包含或覆盖商店价格、披露或页面文案。环境、商品资格或 custom 改变后创建新会话，不复用旧 WebView 会话。
 
 ## 加载与首屏就绪
 

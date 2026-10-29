@@ -101,10 +101,11 @@ final class PaywallWeakNetworkTests: XCTestCase {
         ControlledProtocol.lock.unlock()
     }
 
-    private func makeClient() -> PaywallClient {
+    private func makeClient(remoteUpdatesEnabled: Bool = true) -> PaywallClient {
         let configuration = PaywallQueryConfiguration(endpoint: URL(string: origin + "/query")!,
             runtimeEnvironment: .test, cacheNamespace: namespace, allowedOrigins: nil, placements: partial ? ["a": "a", "b": "b"] : ["a": "a"],
             fallback: .init(placement: "settings", bundledDirectory: directory, fallbackPlacements: ["a"]),
+            remoteUpdatesEnabled: remoteUpdatesEnabled,
             developmentHTTPOrigin: origin,
             onUpdateDiagnostic: { [weak self] in self?.events.append($0) })
         let client = PaywallClient(query: configuration,
@@ -133,6 +134,45 @@ final class PaywallWeakNetworkTests: XCTestCase {
         XCTAssertFalse(events.isEmpty, "后台任务未报告终态")
     }
 
+    func testRemoteUpdatesStayOffUntilEnabledOnSameClient() async throws {
+        installHandler()
+        let client = makeClient(remoteUpdatesEnabled: false)
+        let revision = client.configurationRevision
+        XCTAssertFalse(client.remoteUpdatesEnabled)
+        try await client.prepare()
+        let missing = try await client.resolve("a")
+        XCTAssertNil(missing)
+        XCTAssertEqual(ControlledProtocol.lock.withLock { ControlledProtocol.requestCount }, 0)
+        client.enableRemoteUpdates()
+        client.enableRemoteUpdates()
+        XCTAssertTrue(client.remoteUpdatesEnabled)
+        let selected = try await client.resolve("a")
+        XCTAssertNotNil(selected)
+        try await waitForEvent()
+        XCTAssertEqual(client.configurationRevision, revision)
+        XCTAssertEqual(ControlledProtocol.lock.withLock { ControlledProtocol.requestCount }, 1)
+    }
+
+    func testDynamicEnableKeepsCachedRevisionUntilNextLaunch() async throws {
+        installHandler()
+        let first = makeClient()
+        _ = try await first.resolve("a")
+        try await waitForEvent()
+        nextVersion = true
+        installHandler()
+        events = []
+        let second = makeClient(remoteUpdatesEnabled: false)
+        let original = try await second.resolve("a")
+        XCTAssertNotNil(original)
+        XCTAssertEqual(ControlledProtocol.lock.withLock { ControlledProtocol.requestCount }, 0)
+        second.enableRemoteUpdates()
+        try await waitForEvent()
+        XCTAssertEqual(second.cachedPlacement("a")?.document.pageURL, original?.document.pageURL)
+        let next = makeClient(remoteUpdatesEnabled: false)
+        let updated = try await next.resolve("a")
+        XCTAssertNotEqual(updated?.document.pageURL, original?.document.pageURL)
+    }
+
     func testThreeSecondFallbackDownloadContinuesAndNextClientRestores() async throws {
         queryDelay = 4
         installHandler()
@@ -146,6 +186,7 @@ final class PaywallWeakNetworkTests: XCTestCase {
         try await waitForEvent()
         XCTAssertNil(client.cachedPlacement("a"), "迟到新包不得在本次启动启用")
         let next = makeClient()
+        try await next.restoreLaunchPlacement("a")
         XCTAssertEqual(next.cachedPlacement("a")?.document.documentId, packageID)
     }
 
@@ -206,13 +247,13 @@ final class PaywallWeakNetworkTests: XCTestCase {
         XCTAssertEqual(count, 0); XCTAssertEqual(failures, 0)
     }
 
-    func testDisabledLoggingSuppressesDiagnostic() async throws {
+    func testDisabledLoggingPreservesDiagnostic() async throws {
         empty = true
         installHandler()
         PaywallLogging.mode = .disabled
         let client = makeClient()
         try await client.prepare()
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(events.count, 1)
     }
 
     func testCancelEntryDoesNotCancelBackgroundUpdate() async throws {
@@ -246,6 +287,7 @@ final class PaywallWeakNetworkTests: XCTestCase {
         nextVersion = true
         installHandler()
         let second = makeClient()
+        try await second.restoreLaunchPlacement("a")
         XCTAssertEqual(second.cachedPlacement("a")?.document.revision, 1)
         try await second.prepare()
         try await waitForEvent()
@@ -253,6 +295,7 @@ final class PaywallWeakNetworkTests: XCTestCase {
         guard case let .completed(count, failures) = events[0] else { return XCTFail() }
         XCTAssertEqual(count, 1); XCTAssertEqual(failures, 0)
         let third = makeClient()
+        try await third.restoreLaunchPlacement("a")
         XCTAssertEqual(third.cachedPlacement("a")?.document.revision, 2)
     }
 
@@ -269,9 +312,9 @@ final class PaywallWeakNetworkTests: XCTestCase {
         XCTAssertEqual(events.count, 1)
     }
 
-    func testAutomaticLoggingEnvironmentGate() {
+    func testAutomaticLoggingDoesNotPrint() {
         PaywallLogging.mode = .automatic
-        XCTAssertTrue(PaywallLogging.isEnabled(for: "test"))
+        XCTAssertFalse(PaywallLogging.isEnabled(for: "test"))
         XCTAssertFalse(PaywallLogging.isEnabled(for: "production"))
         PaywallLogging.mode = .enabled
         XCTAssertTrue(PaywallLogging.isEnabled(for: "production"))

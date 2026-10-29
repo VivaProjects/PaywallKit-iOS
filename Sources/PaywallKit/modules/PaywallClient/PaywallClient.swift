@@ -157,6 +157,14 @@ public final class PaywallClient {
         queryRuntime?.reportAttribution(channel: channel, failed: failed)
     }
 
+    /// 查询入口是否已获准远端更新；普通配置来源不受此开关管理。
+    public var remoteUpdatesEnabled: Bool { queryRuntime?.remoteUpdatesEnabled ?? false }
+
+    /// 宿主获取到 true 后单向开启；重复调用不重查、不清除预加载或正在展示的 H5。
+    public func enableRemoteUpdates() {
+        queryRuntime?.enableRemoteUpdates()
+    }
+
     /// 宿主可将此版本用于预加载身份，不需要了解渠道或配置缓存内部状态。
     public var configurationRevision: UUID { configurationGeneration }
 

@@ -90,4 +90,31 @@ POST 的 `conditions.os` 为 `"iOS"` 或 `"Android"`，`conditions.isPad` 为 JS
 
 ### 更新结果诊断
 
-`PaywallQueryConfiguration(onUpdateDiagnostic:)` 在日志实际开启时于 MainActor 回调本轮最终结果：`completed(updatedPlacements:failures:)` 或 `failed`。宿主可复用自己的 Toast；失败数包含独立下载包、点位归档或索引维护失败。中间重试和取消不回调，部分失败不会误报全部成功。无下载候选或所有页面发布身份与展示方式均未变化时，更新数为零，宿主可提示无需更新。该回调不负责页面切换，也不意味着新版已在当前页面生效。
+`PaywallQueryConfiguration(onUpdateDiagnostic:)` 在 MainActor 回调本轮最终结果（不受控制台打印开关影响）：`completed(updatedPlacements:failures:)` 或 `failed`。宿主可复用自己的 Toast；失败数包含独立下载包、点位归档或索引维护失败。中间重试和取消不回调，部分失败不会误报全部成功。无下载候选或所有页面发布身份与展示方式均未变化时，更新数为零，宿主可提示无需更新。该回调不负责页面切换，也不意味着新版已在当前页面生效。
+
+## 关闭远端更新，保留本地 H5
+
+查询入口的 `PaywallQueryConfiguration.remoteUpdatesEnabled` 默认 `false`。宿主尚未获取到 `isNormal`、获取失败或结果为 `false` 时保持关闭；只有明确获取到 `true` 后，才在原 Client 上调用 `enableRemoteUpdates()`，立即启动后台配置请求及后续页面包下载，无需重建实例。已有接入若省略此参数，也不会自动联网更新。关闭后不等待网络或归因，仅恢复当前环境下已校验的完整启动缓存，并保留内置包和原有兜底规则；缺少缓存的点位不会借用其他商品或联网补齐。`prepare` 完成本地恢复后返回，缺失点位的解析返回空，由展示入口执行既有兜底。
+
+此开关不关闭商店价格查询、资格判断、购买、恢复和宿主法律链接行为，也不是 WebView 通用断网开关。它只作用于查询入口，不改变自定义配置来源或旧 GET 接口。主动关闭更新不会发出更新成功/失败回调，也不会清除已有缓存。
+
+`remoteUpdatesEnabled` 配置只表示初始授权，默认为 `false`；Client 的同名只读属性反映当前状态。`enableRemoteUpdates()` 为单向、幂等授权，成功或失败都不因重复调用重新查询；不提供运行中关闭接口。自定义来源和旧 GET 入口调用此方法无作用。
+
+关闭期间 prepare/resolve 只走本地路径，不消耗首次查询机会。开启不会失效 Client 身份、配置版本、点位快照、预加载或正在展示的 H5，不触发当前页重载；已存在点位仍冻结，新包归档供下次启动使用。缺失点位按既有规则补齐，供后续入口使用；开启后新发起且无缓存的展示仍沿用原三秒等待和兜底规则。
+
+Flutter 同一查询域（包括相同初始开关值）的 Client 共用后台任务，任一存活 Client 授权即开启该共享域，重复调用不增加请求；已释放 Client 调用无效。该授权不改变其他 Client 的网页所有权，也不切换正在展示的页面。
+
+```swift
+let query = PaywallQueryConfiguration(
+    endpoint: endpoint,
+    runtimeEnvironment: .production,
+    cacheNamespace: "example-app",
+    allowedOrigins: allowedOrigins,
+    placements: placements,
+    fallback: fallback,
+    remoteUpdatesEnabled: false
+)
+let client = PaywallClient(query: query, catalog: { catalog })
+// 异步获得宿主配置后，在 MainActor 上调用。
+if isNormal { client.enableRemoteUpdates() }
+```

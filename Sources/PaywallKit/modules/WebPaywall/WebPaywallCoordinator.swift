@@ -236,13 +236,9 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
     /// 先发送会话环境，页面据此选择正确的商品绑定。
     private func prepareEnvironment() async {
         // 未覆盖国家时读取商店账户店面，避免从语言或设备地区猜测。
-        let country: String
-        if let configured = environmentConfiguration.country {
-            country = configured
-        } else {
-            let storefront = await Storefront.current
-            country = storefront?.countryCode ?? ""
-        }
+        let country = await PaywallStoreCountry.resolve(
+            configured: environmentConfiguration.country,
+            environment: environmentConfiguration.runtimeEnvironment)
         guard active, !Task.isCancelled else { return }
         environment = WebPaywallEnvironment.capture(
             country: country, configuration: environmentConfiguration)
