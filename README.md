@@ -61,3 +61,8 @@ let fileURL = try await PaywallLogging.export()
 本地兜底与历史页面在后台完整校验，校验返回后再次确认当前商品目录、点位禁用与取消状态。普通资源缓存的校验按包调度，同包合并在途工作，不让一个大包阻塞其他包的准备。未提供已验证快照的本地入口异步完成选择后仍可复用已就绪 WebView。
 
 真机加载耗时采集与阶段判读见 [加载耗时诊断](docs/LOAD_TIMING.md)。
+
+按钮交互反馈契约见 [INTERACTION.md](protocol/INTERACTION.md)。
+宿主接入示例见 [H5_INTERACTION.md](docs/H5_INTERACTION.md)。
+
+动态商品请求与等待态约定见 [DYNAMIC_PRODUCTS](protocol/DYNAMIC_PRODUCTS.md)。

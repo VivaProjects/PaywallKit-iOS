@@ -16,6 +16,7 @@ public struct PaywallScreen: View {
     private let prepare: (WebPaywallDocument) async throws -> PaywallSessionInput
     private let prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)?
     private let openLegal: (PaywallHost.LegalRoute) -> Void
+    private let onInteraction: ((PaywallInteraction) -> Void)?
     private let onEvent: (PaywallSessionEvent) -> Void
 
     public init(client: PaywallClient, placement: String,
@@ -25,6 +26,7 @@ public struct PaywallScreen: View {
                 prepare: @escaping (WebPaywallDocument) async throws -> PaywallSessionInput,
                 prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)? = nil,
                 openLegal: @escaping (PaywallHost.LegalRoute) -> Void,
+                onInteraction: ((PaywallInteraction) -> Void)? = nil,
                 onEvent: @escaping (PaywallSessionEvent) -> Void) {
         self.isPresented = isPresented
         self.localPackages = localPackages
@@ -37,6 +39,7 @@ public struct PaywallScreen: View {
         self.prepare = prepare
         self.prepareCached = prepareCached
         self.openLegal = openLegal
+        self.onInteraction = onInteraction
         self.onEvent = onEvent
     }
 
@@ -51,6 +54,6 @@ public struct PaywallScreen: View {
         PaywallSessionScreen(client: client, placement: placement, resolvedPlacement: resolvedPlacement,
                              preparedPage: matchingPreparedPage, validityIdentity: validityIdentity,
                              cacheIdentity: cacheIdentity, isPresented: isPresented, localPackages: localPackages, canDismiss: canDismiss, copy: copy,
-                             prepare: prepare, prepareCached: prepareCached, openLegal: openLegal, onEvent: onEvent)
+                             prepare: prepare, prepareCached: prepareCached, openLegal: openLegal, onInteraction: onInteraction, onEvent: onEvent)
     }
 }

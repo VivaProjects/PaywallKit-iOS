@@ -19,6 +19,7 @@ struct PaywallSessionScreen: View {
     let prepare: (WebPaywallDocument) async throws -> PaywallSessionInput
     let prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)?
     let openLegal: (PaywallHost.LegalRoute) -> Void
+    let onInteraction: ((PaywallInteraction) -> Void)?
     let onEvent: (PaywallSessionEvent) -> Void
 
     init(client: PaywallClient, placement: String, resolvedPlacement: PaywallPlacement?,
@@ -28,6 +29,7 @@ struct PaywallSessionScreen: View {
          prepare: @escaping (WebPaywallDocument) async throws -> PaywallSessionInput,
          prepareCached: ((WebPaywallDocument) throws -> PaywallSessionInput)?,
          openLegal: @escaping (PaywallHost.LegalRoute) -> Void,
+         onInteraction: ((PaywallInteraction) -> Void)? = nil,
          onEvent: @escaping (PaywallSessionEvent) -> Void) {
         self.isPresented = isPresented
         self.client = client
@@ -41,6 +43,7 @@ struct PaywallSessionScreen: View {
         self.prepare = prepare
         self.prepareCached = prepareCached
         self.openLegal = openLegal
+        self.onInteraction = onInteraction
         self.onEvent = onEvent
         _model = StateObject(wrappedValue: PaywallSessionModel(
             prepared: preparedPage,
@@ -105,7 +108,8 @@ struct PaywallSessionScreen: View {
             onResourceSource: { model.resourceSource($0, session: session) },
             onReadyProducts: { references in
                 model.ready(session: session, productRefs: references, client: client, onEvent: onEvent)
-            }
+            },
+            onInteraction: onInteraction
         ) {
             statusView(error: copy.unavailable)
         }

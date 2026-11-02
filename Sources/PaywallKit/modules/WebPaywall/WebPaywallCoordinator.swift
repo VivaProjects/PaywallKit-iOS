@@ -12,6 +12,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
     private var host: PaywallHost?
     private var onContentHeightChange: ((CGFloat) -> Void)?
     private(set) var contentHeight: CGFloat?
+    var onInteraction: ((PaywallInteraction) -> Void)?
     private var onReady: (() -> Void)?
     private var onReadyProducts: (([String]) -> Void)?
     private var onFailure: (() -> Void)?
@@ -80,9 +81,11 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
                 onContentHeightChange: ((CGFloat) -> Void)? = nil,
                 onTypedFailure: ((PaywallFailure) -> Void)? = nil,
                 onResourceSource: ((String) -> Void)? = nil,
-                onReadyProducts: (([String]) -> Void)? = nil) {
+                onReadyProducts: (([String]) -> Void)? = nil,
+                onInteraction: ((PaywallInteraction) -> Void)? = nil) {
         self.onContentHeightChange = onContentHeightChange
         self.host = host
+        self.onInteraction = onInteraction
         self.onReady = onReady
         self.onReadyProducts = onReadyProducts
         self.onFailure = onFailure
@@ -122,6 +125,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
         attachmentRevision += 1
         host = nil
         onContentHeightChange = nil
+        onInteraction = nil
         onReady = nil
         onReadyProducts = nil
         onFailure = nil
@@ -212,6 +216,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
 
     /// 关闭会话只取消本地等待，不替宿主决定已发起的交易结果。
     func stop() {
+        onInteraction = nil
         trace("session.stop", "active=\(active)")
         active = false
         attached = false
@@ -257,14 +262,15 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// 请求必须属于当前会话、环境和发布清单，重复请求不会重新查询。
+    /// 请求必须属于当前会话与环境，商品由 H5 动态声明，重复请求不会重新查询。
     private func receiveProductRequest(_ event: [String: Any]) {
         guard active, contextSent, expectsProductRequest, requestedProductRefs == nil else { return }
         guard event["bridgeVersion"] as? Int == 2,
               event["sessionID"] as? String == sessionID,
               event["runtimeEnvironment"] as? String == environmentConfiguration.runtimeEnvironment.rawValue,
               let refs = event["productRefs"] as? [String], !refs.isEmpty,
-              refs.count == Set(refs).count, Set(refs).isSubset(of: Set(document.productRefs)) else {
+              refs.count <= 100, refs.count == Set(refs).count,
+              refs.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 256 }) else {
             fail("invalid_product_request"); return
         }
         queryProducts(refs)
@@ -281,7 +287,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// 页面声明需求并通过清单校验后才调用宿主商店查询。
+    /// 页面声明需求并通过会话校验后才调用宿主商店查询。
     private func loadProducts(using bridge: any PaywallPurchaseBridge) async {
         queryingProducts = true
         defer { queryingProducts = false }
@@ -291,7 +297,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
                 references: requestedProductRefs ?? [], group: storefrontGroup, deferred: supportsDeferredProducts)
             guard active, !Task.isCancelled else { return }
             productsLoaded = true
-            // 只接收已通过发布清单校验的请求商品，忽略宿主额外返回项。
+            // 只接收本次请求的商店商品，忽略宿主额外返回项。
             for product in values where requestedProductRefs?.contains(product.productRef) == true {
                 products[product.productRef] = product
             }
@@ -346,8 +352,7 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
             expectsRenderReady = (event["capabilities"] as? [String])?.contains("renderReady") == true
             guard !requiresRenderReady || expectsRenderReady else { fail(); return }
             expectsProductRequest = (event["capabilities"] as? [String])?.contains("productRequest") == true
-            supportsDeferredProducts = !environmentConfiguration.waitsForProducts
-                && expectsProductRequest && expectsRenderReady
+            supportsDeferredProducts = expectsProductRequest && expectsRenderReady
                 && (event["capabilities"] as? [String])?.contains("deferredProducts") == true
             sendContextIfPossible()
         case "productsRequest":
@@ -368,6 +373,8 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
             onContentHeightChange?(CGFloat(height))
         case "renderFailed":
             if acceptsReceipt(event) || (contextSent && event["sessionID"] as? String == sessionID) { fail() }
+        case "interaction":
+            receiveInteraction(event)
         case "purchase", "restore":
             beginAction(type: type, event: event)
         case "close": if allowsActions, let host, host.allowsDismiss { host.dismiss() }
@@ -375,6 +382,17 @@ final class WebPaywallCoordinator: NSObject, WKScriptMessageHandler {
         case "privacy": if allowsActions { host?.openLegal(.privacy) }
         default: break
         }
+    }
+
+    /// 反馈只允许来自当前可见会话，交易中与旧展示消息均不投递。
+    private func receiveInteraction(_ event: [String: Any]) {
+        trace("interaction.received", "active=\(active) attached=\(attached) rendered=\(rendered) actions=\(allowsActions) busy=\(actionTask != nil) callback=\(onInteraction != nil) sessionMatches=\(event["sessionID"] as? String == sessionID) presentationMatches=\(event["presentationID"] == nil || event["presentationID"] as? Int == attachmentRevision)")
+        guard active, attached, rendered, allowsActions, actionTask == nil,
+              event["sessionID"] as? String == sessionID,
+              event["presentationID"] == nil || event["presentationID"] as? Int == attachmentRevision,
+              let interaction = PaywallInteraction(message: event, productRefs: Array(products.keys)) else { return }
+        onInteraction?(interaction)
+        trace("interaction.delivered", "action=\(interaction.action.rawValue) callback=\(onInteraction != nil)")
     }
 
     /// 新协议回执必须属于当前会话；兼容未携带会话标识的旧页面。

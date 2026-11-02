@@ -27,7 +27,7 @@ extension PaywallQuerySnapshot {
               localDocument.documentId == identity.documentId, localDocument.revision == identity.revision,
               localDocument.productRefs == identity.productRefs,
               localDocument.initialProductRef == identity.initialProductRef,
-              identity.productRefs.allSatisfy({ catalog.productRefs.contains($0) }) else {
+              identity.productRefs.allSatisfy({ catalog.accepts($0) }) else {
             throw WebPaywallError.invalidDocument
         }
         let local = localDocument

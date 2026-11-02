@@ -1,6 +1,6 @@
 import Foundation
 
-/// H5 页面清单。页面布局由 CDN 更新，商店商品仍由宿主目录限定。
+/// H5 页面清单。页面布局由 CDN 更新，商店商品按宿主目录策略校验。
 public struct WebPaywallDocument {
     public let documentId: String
     public let revision: Int?
@@ -38,7 +38,7 @@ public struct WebPaywallDocument {
               let catalogKey = raw["catalogKey"] as? String, !catalogKey.isEmpty,
               let refs = raw["productRefs"] as? [String], !refs.isEmpty,
               refs.count == Set(refs).count,
-              refs.allSatisfy({ catalog.productRefs.contains($0) }),
+              refs.allSatisfy({ catalog.accepts($0) }),
               let initial = raw["initialProductRef"] as? String, refs.contains(initial)
         else { throw WebPaywallError.invalidDocument }
         self.documentId = documentId
@@ -71,7 +71,7 @@ public struct WebPaywallDocument {
               let catalogKey = config["catalogKey"] as? String, !catalogKey.isEmpty,
               let refs = config["productRefs"] as? [String], !refs.isEmpty,
               refs.count == Set(refs).count,
-              refs.allSatisfy({ catalog.productRefs.contains($0) }),
+              refs.allSatisfy({ catalog.accepts($0) }),
               let initial = config["initialProductRef"] as? String, refs.contains(initial),
               FileManager.default.fileExists(atPath: page.path),
               FileManager.default.fileExists(atPath: directory.appendingPathComponent("content.json").path)
@@ -86,11 +86,11 @@ public struct WebPaywallDocument {
         self.localReadAccessURL = directory
     }
 
-    /// 只供已校验的本地包仓库使用，商品绑定仍受宿主注册目录限制。
+    /// 只供已校验的本地包仓库使用，商品绑定仍遵守宿主目录策略。
     init(packageDirectory: URL, identity: WebPaywallPackage.Document,
          environment: String, catalog: PaywallCatalog) throws {
         guard !identity.productRefs.isEmpty,
-              identity.productRefs.allSatisfy({ catalog.productRefs.contains($0) }),
+              identity.productRefs.allSatisfy({ catalog.accepts($0) }),
               identity.productRefs.contains(identity.initialProductRef) else {
             throw WebPaywallError.invalidDocument
         }

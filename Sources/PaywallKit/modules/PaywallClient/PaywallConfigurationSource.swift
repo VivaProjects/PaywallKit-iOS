@@ -116,7 +116,7 @@ public struct PaywallConfigurationSource {
               let presentation = configuration.presentations[placement] else { throw PaywallFailure.configuration }
         // 文件已在历史仓库后台完整验证，当前来源与商品目录仍在此重新授权。
         let document = candidate.document
-        guard document.productRefs.allSatisfy({ catalog.productRefs.contains($0) }) else {
+        guard document.productRefs.allSatisfy({ catalog.accepts($0) }) else {
             throw WebPaywallError.invalidDocument
         }
         return PaywallPlacement(name: placement, document: document, presentation: presentation,
