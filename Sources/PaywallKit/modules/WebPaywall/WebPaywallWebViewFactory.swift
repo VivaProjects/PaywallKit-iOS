@@ -14,6 +14,11 @@ enum WebPaywallWebViewFactory {
         ))
         // 链接预览包含系统复制菜单，需要与文字选择一同关闭。
         let webView = WebPaywallDiagnosticWebView(frame: .zero, configuration: configuration)
+        // 统一冷页与预加载表面；页面自身决定是否绘制不透明背景。
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.underPageBackgroundColor = .clear
         webView.allowsLinkPreview = false
         webView.uiDelegate = webView
         return webView

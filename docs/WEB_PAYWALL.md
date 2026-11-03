@@ -131,6 +131,10 @@ To clear idle files call `await WebPaywallResourceCache.shared.clear()` on eithe
 
 这是桥消息结构变更，SDK 与页面包必须配套发布；已发布的旧页面包需要重新打包并递增 revision，不能覆盖原有不可变包。
 
+## overlay 的根宿主约束
+
+点位可使用 `displayModeKey=overlay`。**`paywallHost` 必须修饰包含整个 TabView / NavigationStack 的根内容**，才能覆盖并隔离导航栏、页面与底栏；局部页面上的 host 不能自动提升为整窗展示。系统 Sheet 内需独立根宿主，UIKit 子 UIHostingController 需显式传递入口请求/环境；关闭应清空 host 的 `item`。完整结构和示例见 [OVERLAY.md](OVERLAY.md)。
+
 ## 主动入口立即展示
 
 `paywallHost` 可传入 `presentsImmediately: true`，先展示付费墙容器，再由内部 `PaywallScreen` 加载配置、商品及网页，并提供关闭和失败重试。展示前已有可用配置时沿用其全屏、Sheet 或 Push 方式；没有配置时本次使用全屏，配置返回后不更换容器或再次弹出。加载占位不计为 H5 曝光，仍以页面就绪回执为准。

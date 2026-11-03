@@ -2,6 +2,8 @@
 
 复杂页面的 H5 WebView 接入见 [H5 支付墙接入](WEB_PAYWALL.md)；本页以下内容仍是语义 JSON 原生渲染器的接入方式。
 
+使用 H5 `overlay` 前，必须先按 [根宿主层级约定](OVERLAY.md) 接入：`paywallHost` 放在整个 Tab/导航容器外；系统弹层内使用该弹层根部的独立 host。局部页面上的 host 不提供自动整窗覆盖。
+
 两个包共享 `protocol/examples/onboarding.json`，使用相同 catalogKey 与 productRef 语义。宿主可以用不同 StoreKit/Google Play 商品 ID 实现同一 productRef。SDK 不内置订阅商店 SDK，也不替换现有购买服务。
 
 ## iOS SwiftUI

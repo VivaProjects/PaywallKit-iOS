@@ -1,5 +1,13 @@
 # iOS SDK 变更记录
 
+## [0.8.0] - 2026-11-03
+
+- 发布验证：通用 iOS 目标无签名编译、Foundation 配置回归、SwiftPM 清单和独立包检查通过；未运行设备 UI、StoreKit 交易或新增 UIKit XCTest。
+
+- 在 `paywallHost` / `Presentation.overlay` 公开 API 注释、README 与接入文档中明确整窗 overlay 的根宿主要求、系统弹层边界、UIKit 请求传递及 item 关闭契约，并提供根宿主示例。
+
+- 新增点位级 `overlay` 透明全屏覆盖展示，隔离背景触摸与辅助功能；统一冷页和预加载 WebView 透明背景，补充配置/背景测试与接入文档。
+
 ## [0.7.0] - 2026-11-02
 
 - H5 动态商品请求、商品加载占位协议及宿主交互回调。

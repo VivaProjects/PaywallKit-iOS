@@ -9,10 +9,18 @@
 Git 发布后：在 Xcode 的 Add Package Dependencies 中填写本仓库的真实 Git URL，选择已发布的 `X.Y.Z` 版本和 `PaywallKit` 产品。也可在宿主 `Package.swift` 中声明：
 
 ```swift
-.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.5.0")
+.package(url: "https://github.com/VivaProjects/PaywallKit-iOS.git", exact: "0.8.0")
 ```
 
-使用版本标签固定依赖；当前版本为 `0.5.0`。
+使用版本标签固定依赖；当前版本为 `0.8.0`。
+
+## overlay 接入前提
+
+**点位可能下发 `overlay` 时，必须把 `paywallHost` 挂在包含完整 TabView / NavigationStack 的根内容外。** 挂在页面、单个 Tab 或卡片内，只覆盖并隔离该局部层级，外层导航栏和 Tab Bar 仍可能可点击；仅设置 `displayModeKey=overlay` 不会提升宿主层级。
+
+页面把入口请求交给根宿主持有。系统 Sheet / fullScreenCover 内的入口需要该弹层根部的独立 host；UIKit 创建的子 UIHostingController 需显式传递入口请求或环境。关闭时清空 host 的 `item`。H5 负责透明根背景、遮罩和内容动画。
+
+先阅读 [overlay 根宿主示例与关闭约定](docs/OVERLAY.md) 再启用该模式；这些要求也显示在 `paywallHost` 与 `Presentation.overlay` 的公开 API 注释中。
 
 ## 维护与发布
 
@@ -28,6 +36,7 @@ xcodebuild -scheme PaywallKit -destination 'generic/platform=iOS Simulator' -der
 版本只由本仓库 `VERSION` 管理，变更记录为 `CHANGELOG.md`。升版和发布步骤见 [发布说明](docs/RELEASING.md)。
 
 - [宿主接入](docs/INTEGRATION.md)
+- [透明全屏 overlay](docs/OVERLAY.md)
 - [H5 桥接](docs/WEB_PAYWALL.md)
 - [协议契约](docs/PROTOCOL.md)
 - [本地包与回退](docs/LOCAL_PAYWALL_FALLBACK.md)

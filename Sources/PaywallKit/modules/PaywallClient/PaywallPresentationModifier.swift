@@ -41,6 +41,8 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
 
     func body(content: Content) -> some View {
         content
+            .allowsHitTesting(!isOverlayPresented)
+            .accessibilityHidden(isOverlayPresented)
             .background { preparationView }
             .overlay { loadingOverlay }
             .fullScreenCover(item: modalBinding(sheet: false), onDismiss: finish) { value in
@@ -62,6 +64,10 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
                     .interactiveDismissDisabled(mode == .halfSheetLocked)
             }
             .overlay { pushPresentation }
+            .overlay { overlayPresentation }
+            .onChange(of: activeItem?.id) { id in
+                if mode == .overlay && id == nil { finish() }
+            }
             .task(id: LoadIdentity(itemID: item?.id, retry: retryGeneration)) {
                 await prepare()
             }
@@ -74,6 +80,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
             }
             .onDisappear {
                 if preparationToken != nil { finish() }
+                if isOverlayPresented { finish() }
             }
             .alert("Unable to load subscriptions.", isPresented: errorBinding) {
                 Button("Retry") { loadError = nil; retryGeneration += 1 }
@@ -81,6 +88,22 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
             } message: {
                 Text(loadError ?? "")
             }
+    }
+
+    /// 透明覆盖层只在实际展示期间隔离宿主交互和辅助功能。
+    private var isOverlayPresented: Bool { mode == .overlay && activeItem != nil }
+
+    /// H5 拥有遮罩和入场动画；透明区域仍由覆盖层截获触摸。
+    @ViewBuilder
+    private var overlayPresentation: some View {
+        if mode == .overlay, let value = activeItem {
+            ZStack {
+                Color.clear.contentShape(Rectangle()).onTapGesture { }
+                paywall(value)
+            }
+            .ignoresSafeArea(.container, edges: .all)
+            .accessibilityAddTraits(.isModal)
+        }
     }
 
     /// Push 在独立覆盖层中拥有自己的导航栈，不向 Plan 等业务路径注册目的页。
@@ -157,7 +180,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
         Binding(
             get: {
                 let isSheet = mode == .halfSheet || mode == .halfSheetLocked
-                return mode != .push && isSheet == sheet ? activeItem : nil
+                return mode != .push && mode != .overlay && isSheet == sheet ? activeItem : nil
             },
             set: { if $0 == nil { activeItem = nil } }
         )
@@ -374,6 +397,15 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
 
 extension View {
     /// 按下发配置展示支付墙；被动入口可选择就绪后展示，跳过时仅清空 item。
+    ///
+    /// - Important: 点位可能使用 `overlay` 时，必须将本 modifier 挂在包含完整
+    ///   TabView / NavigationStack 的根内容外；页面、卡片或单个 Tab 内的 host
+    ///   只能覆盖其局部层级，背景触摸与辅助功能隔离也仅作用于该 host 的内容。
+    ///   系统 sheet / fullScreenCover 内的入口应使用该弹层根部的独立 host，不能跨窗口覆盖。
+    ///   UIKit 自建子 UIHostingController 时，需由宿主显式传递入口请求或其环境。
+    /// - Note: overlay 的关闭与购买/恢复成功应清空传入的 `item`，不要依赖系统 dismiss()。
+    ///   SDK 提供透明容器与展示通知；H5 负责遮罩及动画。完整接入示例见 docs/OVERLAY.md。
+    ///
     /// presentsImmediately 仅用于主动入口：有缓存沿用展示方式，无缓存本次保持全屏并在页面内加载。
     /// waitsForReady、preloadedPage 与 skipsMissingPlacement 优先保留后台等待或跳过语义。
     /// waitsForReady 需搭配 prepareForPresentation；预加载句柄优先且只接管一次。

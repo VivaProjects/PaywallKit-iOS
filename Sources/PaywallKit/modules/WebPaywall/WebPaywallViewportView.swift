@@ -14,6 +14,7 @@ final class WebPaywallViewportView: UIView {
         self.webView = webView
         self.sheetLayoutID = sheetLayoutID
         super.init(frame: .zero)
+        isOpaque = false
         clipsToBounds = true
         webView.removeFromSuperview()
         webView.autoresizingMask = []

@@ -4,6 +4,11 @@ import Foundation
 public struct WebPaywallConfiguration {
     public enum Presentation: String {
         case fullScreen, halfSheet, halfSheetLocked, push
+
+        /// 透明覆盖在 paywallHost 的内容上；整窗覆盖要求 host 位于 Tab/导航容器外层。
+        /// 仅隔离该 host 的底层内容，不能跨系统弹层或窗口；遮罩与动画由 H5 提供。
+        /// 关闭时清空 host 的 item，接入结构见 docs/OVERLAY.md。
+        case overlay
     }
 
     public let disabledPlacements: Set<String>
