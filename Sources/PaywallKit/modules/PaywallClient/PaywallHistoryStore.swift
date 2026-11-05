@@ -1,6 +1,6 @@
 import Foundation
 
-/// 成功页面独立归档，普通资源 LRU 清理不会删除最近两个成功版本。
+/// 成功页面独立归档，最多两个版本且参与统一容量及闲置清理。
 actor PaywallHistoryStore {
     static let shared = PaywallHistoryStore()
     struct Candidate {
@@ -22,6 +22,7 @@ actor PaywallHistoryStore {
     init(directory: URL? = nil) {
         root = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PaywallKit/SuccessfulVersions", isDirectory: true)
+        WebPaywallDiskCache.shared.register(root, grouped: true)
     }
 
     /// 首屏成功且资源完整才提交记录；中途取消保留原来的成功版本。
@@ -41,10 +42,12 @@ actor PaywallHistoryStore {
         try Task.checkCancellation()
         let group = snapshot.key(placement: placement, documentID: identity.documentId)
         let directory = try prepareDirectory(group)
-        let previous = records(in: directory)
-        // 同版本不同内容不能覆盖已经成功且可能仍在展示的包。
-        if previous.contains(where: { $0.identity.revision == identity.revision }) { return }
+        var previous = records(in: directory)
+        if reuse(previous, revision: identity.revision, in: directory) { return }
+        previous.removeAll { $0.identity.revision == identity.revision }
         let packageKey = WebPaywallPackage.digest(try JSONEncoder().encode(identity))
+        let reservation = WebPaywallResourceLease(directory: directory.appendingPathComponent(packageKey), release: {})
+        defer { withExtendedLifetime(reservation) {} }
         let record = Record(snapshot: snapshot, identity: identity, directory: packageKey)
         let next = Array((previous + [record]).sorted { $0.identity.revision > $1.identity.revision }.prefix(2))
         guard next.contains(where: { $0.directory == packageKey }) else { return }
@@ -55,6 +58,16 @@ actor PaywallHistoryStore {
         prune(group)
         WebPaywallDiagnostics.log(snapshot.environment, "history.recorded",
                                   "placement=\(placement) revision=\(identity.revision)")
+    }
+
+    /// 同版本不覆盖活跃资源；已被容量或闲置策略回收时允许重新归档。
+    private func reuse(_ previous: [Record], revision: Int, in directory: URL) -> Bool {
+        guard let existing = previous.first(where: { $0.identity.revision == revision }) else { return false }
+        let archived = directory.appendingPathComponent(existing.directory)
+        // 先预留再检查存在性，避免维护器在两者之间隔离目录。
+        let used = WebPaywallResourceLease(directory: archived, release: {})
+        defer { withExtendedLifetime(used) {} }
+        return FileManager.default.fileExists(atPath: archived.path)
     }
 
     /// 只尝试同文档最近一个更低版本；校验失败交由上层进入 Settings。

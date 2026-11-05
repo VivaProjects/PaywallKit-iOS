@@ -30,6 +30,7 @@ public actor WebPaywallResourceCache {
         scan = nil
         beforeVerify = nil
         cleanup = { await WebPaywallCacheMaintenance.remove($0) }
+        if capacityBytes != Int.max { WebPaywallDiskCache.shared.register(root) }
     }
 
     /// 允许宿主侧测试注入传输，实际页面仍走同一清单与磁盘校验。
@@ -45,6 +46,7 @@ public actor WebPaywallResourceCache {
         self.scan = scan
         self.beforeVerify = beforeVerify
         self.cleanup = cleanup
+        if capacityBytes != Int.max { WebPaywallDiskCache.shared.register(root) }
     }
 
     /// 命中直接读取磁盘；后台可提供较长下载期限，同版本仍共用首个下载任务。
@@ -59,6 +61,8 @@ public actor WebPaywallResourceCache {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let key = WebPaywallPackage.digest(try encoder.encode(identity) + Data(runtimeEnvironment.utf8))
+        let reservation = WebPaywallResourceLease(directory: root.appendingPathComponent(key), release: {})
+        defer { withExtendedLifetime(reservation) {} }
         // 等待任务也先占用租约，避免下载完成与挂载之间被清理。
         WebPaywallDiagnostics.log(runtimeEnvironment, "resource.prepare", "key=\(key) shared=\(pending[key] != nil)")
         pins[key, default: 0] += 1
@@ -102,6 +106,8 @@ public actor WebPaywallResourceCache {
         encoder.outputFormatting = .sortedKeys
         let key = WebPaywallPackage.digest(try encoder.encode(identity) + Data(environment.utf8))
         let directory = root.appendingPathComponent(key, isDirectory: true)
+        let reservation = WebPaywallResourceLease(directory: directory, release: {})
+        defer { withExtendedLifetime(reservation) {} }
         try Task.checkCancellation()
         pins[key, default: 0] += 1
         do {

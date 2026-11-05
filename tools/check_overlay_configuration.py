@@ -14,6 +14,7 @@ files = [
     "modules/WebPaywall/WebPaywallJSONValue.swift",
     "modules/WebPaywall/ResourcesCache/WebPaywallPackage.swift",
     "modules/WebPaywall/ResourcesCache/WebPaywallResourceLease.swift",
+    "modules/WebPaywall/ResourcesCache/WebPaywallDiskCache.swift",
     "modules/PaywallClient/PaywallHistorySnapshot.swift",
 ]
 with tempfile.TemporaryDirectory(prefix="paywall-overlay-swift-") as temporary:

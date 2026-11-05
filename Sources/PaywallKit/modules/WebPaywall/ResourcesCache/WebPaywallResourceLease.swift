@@ -10,7 +10,11 @@ public final class WebPaywallResourceLease: @unchecked Sendable {
         pageURL = directory.appendingPathComponent("offline.html")
         readAccessURL = directory
         self.release = release
+        WebPaywallDiskCache.shared.retain(directory)
     }
 
-    deinit { release() }
+    deinit {
+        release()
+        WebPaywallDiskCache.shared.release(readAccessURL)
+    }
 }

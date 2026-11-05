@@ -118,3 +118,9 @@ let client = PaywallClient(query: query, catalog: { catalog })
 // 异步获得宿主配置后，在 MainActor 上调用。
 if isNormal { client.enableRemoteUpdates() }
 ```
+
+## Page cache retention
+
+Downloadable page resources, query snapshots and successful-version archives share a 300 MiB (300 * 1024 * 1024 bytes) budget. Maintenance removes idle packages unused for 30 days, then removes least recently used idle packages if the budget is exceeded. Old request scopes are included. Cache initialization and lease release (including after downloads) trigger maintenance; there is no background timer. Read, write, presentation and active launch-snapshot leases protect their packages and may temporarily exceed the budget. Bundled fallbacks and dedicated update stores retain their separate version policies. Configuration, attribution and logs are excluded.
+
+Evicted indexed packages become cache misses on restore and follow the existing query/bundled fallback path. A successful presentation can archive the same version again if its history package was evicted. Retention never changes placement routing, product bindings, environment or disabled-placement policy. Thirty days means idle resource retention, not campaign expiry; existing placements remain frozen for the current launch.

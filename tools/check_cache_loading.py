@@ -14,6 +14,7 @@ COMMON = [
     'modules/WebPaywall/WebPaywallDocument.swift',
     'modules/WebPaywall/ResourcesCache/WebPaywallPackage.swift',
     'modules/WebPaywall/ResourcesCache/WebPaywallResourceLease.swift',
+    'modules/WebPaywall/ResourcesCache/WebPaywallDiskCache.swift',
     'modules/WebPaywall/ResourcesCache/WebPaywallCacheMaintenance.swift',
     'modules/WebPaywall/ResourcesCache/WebPaywallLocalDocumentLoader.swift',
 ]

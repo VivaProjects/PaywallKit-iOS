@@ -35,6 +35,7 @@ final class PaywallQuerySnapshotStore {
         self.environment = environment
         self.scan = scan
         self.beforeIndexWrite = beforeIndexWrite
+        WebPaywallDiskCache.shared.register(directory)
     }
 
     private var indexTask: Task<Index?, Never>?
@@ -81,6 +82,7 @@ final class PaywallQuerySnapshotStore {
         await loadIndex()
         guard !Task.isCancelled, let snapshot = snapshots[name] else { return nil }
         let key = snapshot.packageKey
+        let lease = retain(key)
         if opening[key] == nil {
             let directory = packageDirectory(key), environment = self.environment
             opening[key] = Task.detached(priority: .userInitiated) {
@@ -90,7 +92,7 @@ final class PaywallQuerySnapshotStore {
             }
         }
         guard let document = await opening[key]!.value, !Task.isCancelled else { return nil }
-        return Candidate(snapshot: snapshot, lease: retain(key), document: document)
+        return Candidate(snapshot: snapshot, lease: lease, document: document)
     }
 
     /// 完整拷贝和校验后原子提交点位索引，任何失败都保留原来的可用记录。
