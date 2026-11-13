@@ -14,11 +14,7 @@ public enum WebPaywallPackageLoader {
     static func prepare(pageURL: URL, runtimeEnvironment: String,
                         allowedOrigins: Set<String>?, catalog: PaywallCatalog,
                         developmentHTTPOrigin: String? = nil) async throws -> (WebPaywallDocument, WebPaywallResourceLease) {
-        #if DEBUG
-        let localOrigin = runtimeEnvironment == "test" ? developmentHTTPOrigin : nil
-        #else
-        let localOrigin: String? = nil
-        #endif
+        let localOrigin = WebPaywallDocument.permittedHTTPOrigin(developmentHTTPOrigin, environment: runtimeEnvironment)
         // 开发 HTTP 仅放行宿主指定的唯一来源，仍逐项校验完整页面包。
         guard pageURL.scheme == "https" ||
                 (pageURL.scheme == "http" && WebPaywallDocument.origin(of: pageURL) == localOrigin), pageURL.user == nil, pageURL.password == nil,
@@ -39,7 +35,7 @@ public enum WebPaywallPackageLoader {
         _ = try WebPaywallPackage.parse(bytes, identity: identity, environment: runtimeEnvironment)
         let document = try WebPaywallDocument(data: JSONEncoder().encode(identity),
                                              allowedOrigins: allowedOrigins, catalog: catalog,
-                                             developmentHTTPOrigin: localOrigin)
+                                             permittedHTTPOrigin: localOrigin)
         let lease = try await WebPaywallResourceCache.shared.prepare(document: document,
                                                                     runtimeEnvironment: runtimeEnvironment,
                                                                     downloadTimeout: 120, manifestData: bytes)

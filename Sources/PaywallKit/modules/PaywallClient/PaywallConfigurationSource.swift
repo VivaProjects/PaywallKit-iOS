@@ -29,7 +29,8 @@ public struct PaywallConfigurationSource {
                 request: @escaping () async throws -> URLRequest) {
         namespace = cacheNamespace
         self.allowedOrigins = allowedOrigins
-        self.developmentHTTPOrigin = developmentHTTPOrigin
+        self.developmentHTTPOrigin = WebPaywallDocument.permittedHTTPOrigin(
+            developmentHTTPOrigin, environment: runtimeEnvironment)
         self.defaults = defaults
         self.legacyCacheKey = legacyCacheKey
         self.catalogs = catalogs
@@ -138,6 +139,6 @@ public struct PaywallConfigurationSource {
     /// 所有读取路径使用同一份完整配置校验。
     private func validate(_ data: Data, catalogs: [String: PaywallCatalog]) throws -> WebPaywallConfiguration {
         try WebPaywallConfiguration(data: data, allowedOrigins: allowedOrigins,
-                                    catalogs: catalogs, developmentHTTPOrigin: developmentHTTPOrigin)
+                                    catalogs: catalogs, permittedHTTPOrigin: developmentHTTPOrigin)
     }
 }

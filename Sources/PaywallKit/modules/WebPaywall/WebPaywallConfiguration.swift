@@ -23,6 +23,13 @@ public struct WebPaywallConfiguration {
     /// 校验整份配置后冻结页面映射，避免展示期间读到半更新的数据。
     public init(data: Data, allowedOrigins: Set<String>?, catalogs: [String: PaywallCatalog],
                 developmentHTTPOrigin: String? = nil) throws {
+        try self.init(data: data, allowedOrigins: allowedOrigins, catalogs: catalogs,
+                      permittedHTTPOrigin: WebPaywallDocument.permittedHTTPOrigin(developmentHTTPOrigin, environment: nil))
+    }
+
+    /// 在线配置与缓存配置都使用宿主已授权的来源校验每个文档。
+    init(data: Data, allowedOrigins: Set<String>?, catalogs: [String: PaywallCatalog],
+         permittedHTTPOrigin: String?) throws {
         guard data.count <= 1_000_000,
               let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(raw.keys).isSubset(of: Set(["version", "placements", "preload", "paywalls", "presentations", "sessions", "sheetAspectRatios", "disabledPlacements"])),
@@ -46,7 +53,7 @@ public struct WebPaywallConfiguration {
             let documentData = try JSONSerialization.data(withJSONObject: payload)
             parsed[identifier] = try WebPaywallDocument(
                 data: documentData, allowedOrigins: allowedOrigins, catalog: catalog,
-                developmentHTTPOrigin: developmentHTTPOrigin)
+                permittedHTTPOrigin: permittedHTTPOrigin)
         }
         let disabled = raw["disabledPlacements"] as? [String] ?? []
         guard raw["disabledPlacements"] == nil || raw["disabledPlacements"] is [String],

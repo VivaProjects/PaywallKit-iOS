@@ -322,8 +322,9 @@ final class PaywallQueryRuntime {
         try await PaywallQueryRetry.run(environment: configuration.runtimeEnvironment.rawValue, stage: "configuration") {
             try await self.configuration.waitUntilNetworkAvailable?()
             try Task.checkCancellation()
+            let redirectPolicy = self.configuration.developmentHTTPOrigin.map(PaywallQueryRedirectPolicy.init)
             let (bytes, response) = try await PaywallConfigurationDiagnostics.data(
-                for: request, environment: self.configuration.runtimeEnvironment.rawValue)
+                for: request, environment: self.configuration.runtimeEnvironment.rawValue, delegate: redirectPolicy)
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else { throw WebPaywallError.invalidDocument }
             guard http.statusCode == 200 else { throw PaywallQueryRetry.HTTPFailure(status: http.statusCode) }
@@ -342,5 +343,26 @@ final class PaywallQueryRuntime {
 
     private func trace(_ event: String, _ detail: String) {
         WebPaywallDiagnostics.log(configuration.runtimeEnvironment.rawValue, event, "query=\(diagnosticID) \(detail)")
+    }
+}
+
+/// 测试查询允许 HTTP 时，重定向也只能访问获准的 HTTP 来源或 HTTPS。
+private final class PaywallQueryRedirectPolicy: NSObject, URLSessionTaskDelegate {
+    private let permittedHTTPOrigin: String
+
+    init(permittedHTTPOrigin: String) {
+        self.permittedHTTPOrigin = permittedHTTPOrigin
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let url = request.url, url.user == nil, url.password == nil,
+              url.scheme == "https" ||
+                (url.scheme == "http" && WebPaywallDocument.origin(of: url) == permittedHTTPOrigin) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }

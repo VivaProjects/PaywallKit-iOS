@@ -64,7 +64,8 @@ public final class PaywallLocalPackageStore {
         self.updateURL = updateURL
         environment = runtimeEnvironment
         origins = allowedOrigins
-        self.developmentHTTPOrigin = developmentHTTPOrigin
+        self.developmentHTTPOrigin = WebPaywallDocument.permittedHTTPOrigin(
+            developmentHTTPOrigin, environment: runtimeEnvironment)
         self.catalog = catalog
         let namespace = WebPaywallPackage.digest(Data(cacheNamespace.utf8))
         root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -216,7 +217,7 @@ public final class PaywallLocalPackageStore {
         }
         let data = try JSONEncoder().encode(selected)
         let document = try WebPaywallDocument(data: data, allowedOrigins: origins, catalog: catalog(),
-                                             developmentHTTPOrigin: developmentHTTPOrigin)
+                                             permittedHTTPOrigin: developmentHTTPOrigin)
         // 即使包未更新，也接收显式开关；版本回退不能覆盖已接受的新配置。
         guard update.version >= max(state.highestVersion, state.policyVersion) else { return }
         state.disabledPlacements = Set(update.disabledPlacements)
@@ -240,7 +241,7 @@ public final class PaywallLocalPackageStore {
     public func adopt(_ document: WebPaywallDocument) async throws {
         let selected = try WebPaywallPackage.identity(document)
         _ = try WebPaywallDocument(data: JSONEncoder().encode(selected), allowedOrigins: origins,
-                                  catalog: catalog(), developmentHTTPOrigin: developmentHTTPOrigin)
+                                  catalog: catalog(), permittedHTTPOrigin: developmentHTTPOrigin)
         guard selected.revision > state.highestVersion,
               !state.rejected.contains(selected.revision) else { return }
         let (verified, lease) = try await cache.prepareLocal(document: document, environment: environment)
@@ -260,11 +261,7 @@ public final class PaywallLocalPackageStore {
 
     /// 描述和资源来源采用同一信任边界，禁止重定向。
     private func validateUpdateURL(_ updateURL: URL) throws {
-        #if DEBUG
         let permitsHTTP = WebPaywallDocument.origin(of: updateURL) == developmentHTTPOrigin
-        #else
-        let permitsHTTP = false
-        #endif
         guard ["test", "production"].contains(environment),
               updateURL.scheme == "https" || (updateURL.scheme == "http" && permitsHTTP),
               origins.map({ $0.contains(WebPaywallDocument.origin(of: updateURL)) }) ?? true,

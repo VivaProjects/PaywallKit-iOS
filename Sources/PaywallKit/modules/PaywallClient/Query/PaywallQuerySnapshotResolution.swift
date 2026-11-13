@@ -16,7 +16,7 @@ extension PaywallQuerySnapshot {
         // 元数据仍按远端来源校验，本地路径只来自仓库持有的完整包租约。
         let value = try WebPaywallConfiguration(data: configuration, allowedOrigins: query.allowedOrigins,
                                                catalogs: ["default": catalog],
-                                               developmentHTTPOrigin: query.developmentHTTPOrigin)
+                                               permittedHTTPOrigin: query.developmentHTTPOrigin)
         guard !value.disabledPlacements.contains(placement),
               let remote = value.document(forPlacement: placement),
               let mode = value.presentations[placement],

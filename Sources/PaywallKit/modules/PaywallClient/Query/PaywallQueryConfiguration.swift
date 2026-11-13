@@ -34,10 +34,7 @@ public struct PaywallQueryConfiguration {
         self.placements = placements
         self.fallback = fallback
         self.waitUntilNetworkAvailable = waitUntilNetworkAvailable
-        #if DEBUG
-        self.developmentHTTPOrigin = runtimeEnvironment == .test ? developmentHTTPOrigin : nil
-        #else
-        self.developmentHTTPOrigin = nil
-        #endif
+        self.developmentHTTPOrigin = WebPaywallDocument.permittedHTTPOrigin(
+            developmentHTTPOrigin, environment: runtimeEnvironment.rawValue)
     }
 }

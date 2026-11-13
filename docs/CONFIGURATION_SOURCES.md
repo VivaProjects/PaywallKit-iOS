@@ -68,9 +68,9 @@ For custom configuration sources, `PaywallClient.invalidateConfiguration()` canc
 
 No H5 bridge payload or Flutter API is changed.
 
-## Local Debug testing
+## Local server testing
 
-`PaywallQueryConfiguration(developmentHTTPOrigin:)` explicitly permits one HTTP origin for the query, package metadata, configuration validation and fallback update path in Debug + Test only. Release or production ignores this option. Page packages still require complete resource hashes and matching product bindings. The host must supply local networking permission and deploy complete immutable packages, not source directories.
+In Debug and Release, a host using `runtimeEnvironment: .test` can explicitly pass `developmentHTTPOrigin` (for example, `http://192.168.1.20:8789`) to `PaywallQueryConfiguration`. That origin applies to the query, page packages, restored snapshots, and fallback updates. Production builds using the production runtime environment require HTTPS. Release APIs without an explicit runtime environment also require HTTPS. Page packages still require complete resource hashes and matching product bindings. For LAN testing, configure the host’s local network usage description and ATS local networking permission, and deploy complete immutable packages.
 
 ### 测试时清理启动缓存
 

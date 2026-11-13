@@ -13,12 +13,13 @@ public struct WebPaywallDocument {
     /// 校验页面清单；显式传 nil 关闭来源白名单，空集合仍拒绝全部来源。
     public init(data: Data, allowedOrigins: Set<String>?, catalog: PaywallCatalog,
                 developmentHTTPOrigin: String? = nil) throws {
-        // 本机 HTTP 仅供 Debug 演示；正式清单仍必须指向 HTTPS。
-        #if DEBUG
-        let localHTTPOrigin = developmentHTTPOrigin
-        #else
-        let localHTTPOrigin: String? = nil
-        #endif
+        try self.init(data: data, allowedOrigins: allowedOrigins, catalog: catalog,
+                      permittedHTTPOrigin: Self.permittedHTTPOrigin(developmentHTTPOrigin, environment: nil))
+    }
+
+    /// 使用上层按运行环境授权的来源；清单自身不能扩大权限。
+    init(data: Data, allowedOrigins: Set<String>?, catalog: PaywallCatalog,
+         permittedHTTPOrigin: String?) throws {
         guard data.count <= 256_000,
               let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(raw.keys) == Set(["kind", "bridgeVersion", "documentId", "revision", "pageUrl",
@@ -30,7 +31,7 @@ public struct WebPaywallDocument {
               let pageString = raw["pageUrl"] as? String,
               let pageURL = URL(string: pageString),
               pageURL.scheme == "https" ||
-                  (pageURL.scheme == "http" && Self.origin(of: pageURL) == localHTTPOrigin),
+                  (pageURL.scheme == "http" && Self.origin(of: pageURL) == permittedHTTPOrigin),
               pageURL.user == nil, pageURL.password == nil, pageURL.fragment == nil,
               pageURL.query == nil,
               pageURL.host?.isEmpty == false,
@@ -122,6 +123,14 @@ public struct WebPaywallDocument {
         return WebPaywallDocument(documentId: documentId, revision: revision,
             pageURL: lease.pageURL, catalogKey: catalogKey, productRefs: productRefs,
             initialProductRef: initialProductRef, localReadAccessURL: lease.readAccessURL)
+    }
+
+    /// 测试环境可显式允许一个 HTTP 来源。缺少环境的旧接口仅在调试时接受该参数。
+    static func permittedHTTPOrigin(_ origin: String?, environment: String?) -> String? {
+        #if DEBUG
+        if environment == nil { return origin }
+        #endif
+        return environment == "test" ? origin : nil
     }
 
     public static func origin(of url: URL) -> String {

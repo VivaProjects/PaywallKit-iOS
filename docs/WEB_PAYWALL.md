@@ -12,7 +12,7 @@ SDK 只提供通用展示、桥接、配置校验与商店交互接口。H5 页�
 
 清单格式见 [web-paywall.schema.json](../protocol/web-paywall.schema.json)，示例见 [web-paywall.json](../protocol/examples/web-paywall.json)。宿主先验证配置来源，再用可信 origin 白名单及预注册的 `PaywallCatalog` 构造 `WebPaywallDocument`。白名单不能由下发 JSON 自行授权。`productRefs` 填写真实商店商品 ID，必须属于宿主注册目录；原生按照关联页面清单查询，不沿用原点位的商品组合。
 
-正式页面使用 HTTPS 和不可变版本 URL。iOS Debug 可显式允许指定 HTTP origin；Release 和 Flutter 不接受 HTTP 页面清单。SDK 不提供生产配置服务、页面上传或 ZIP 离线下载；离线页面由宿主资源包维护。
+正式页面使用 HTTPS 和不可变版本 URL。iOS 测试环境可在查询配置中通过 `developmentHTTPOrigin` 允许一个 HTTP 来源，支持 Debug 和 Release；生产环境及 Flutter 使用 HTTPS。SDK 不提供生产配置服务、页面上传或 ZIP 离线下载；离线页面由宿主资源包维护。
 
 ## 宿主入口
 
