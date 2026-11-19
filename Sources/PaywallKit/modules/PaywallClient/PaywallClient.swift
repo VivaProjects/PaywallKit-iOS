@@ -157,6 +157,10 @@ public final class PaywallClient {
         queryRuntime?.reportAttribution(channel: channel, failed: failed)
     }
 
+    /// 已有点位的新包完成校验与归档后，宿主可为尚未展示的入口选用该快照。
+    /// 参数依次为旧点位、新点位、本次请求的渠道。已有会话不会被修改。
+    public var onReplacementStaged: (@MainActor (PaywallPlacement, PaywallPlacement, String) -> Void)?
+
     /// 查询入口是否已获准远端更新；普通配置来源不受此开关管理。
     public var remoteUpdatesEnabled: Bool { queryRuntime?.remoteUpdatesEnabled ?? false }
 

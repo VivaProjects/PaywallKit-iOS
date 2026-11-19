@@ -281,6 +281,11 @@ final class PaywallQueryRuntime {
         let candidate = try await snapshots.save(snapshot, resource: page.resource, batch: batch)
         let selected = try snapshot.resolve(using: configuration, catalog: catalog(), clientID: client.id, lease: candidate.lease, localDocument: candidate.document)
         trace("query.cache_staged", "placement=\(page.placement) revision=\(page.document.revision ?? 0)")
+        if let notify = client.onReplacementStaged, let current = activePlacements[page.placement],
+           current.document.documentId != selected.document.documentId,
+           let query = try? JSONDecoder().decode(PaywallQueryRequest.self, from: body) {
+            notify(current, selected, query.conditions.channel)
+        }
         // 超时走兜底的点位保持冻结，迟到包只供下次冷启动使用。
         if activePlacements[page.placement] == nil, !deferredPlacements.contains(page.placement) {
             activePlacements[page.placement] = selected
