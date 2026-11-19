@@ -1,6 +1,6 @@
 import WebKit
 
-/// Sheet 确定视口后只做画面形变；配置或窗口尺寸变化才重新布局网页。
+/// Sheet 入场时保持网页比例，系统弹性拖动时让已绘制的页面随容器形变。
 final class WebPaywallViewportView: UIView {
     let webView: WKWebView
     private var hasInitialLayout = false
@@ -51,7 +51,19 @@ final class WebPaywallViewportView: UIView {
             viewportEstablished = false
             applyViewport()
         }
-        alignRenderedViewport()
+        if sheetLayoutID == nil {
+            UIView.performWithoutAnimation { alignRenderedViewport() }
+        } else if #available(iOS 26.0, *),
+                  viewportEstablished || bounds.height > webView.bounds.height {
+            // 拖动和回弹须继承系统布局动画，使网页和弹窗的可见边缘逐帧同步。
+            alignRenderedViewport()
+        } else {
+            // 首次收敛到内容高度时靠顶裁切，避免把整页文字与按钮压扁。
+            UIView.performWithoutAnimation {
+                webView.transform = .identity
+                webView.center = CGPoint(x: bounds.midX, y: bounds.minY + webView.bounds.midY)
+            }
+        }
         if sheetLayoutID != nil && viewportEstablished { return }
         if viewportEstablished && webView.bounds.size == bounds.size { return }
         scheduleInitialViewport()
@@ -73,10 +85,8 @@ final class WebPaywallViewportView: UIView {
     /// 临时缩放已绘制表面以贴合上下边缘，不改变网页视口或 H5 滚动位置。
     private func alignRenderedViewport() {
         guard webView.bounds.height > 0 else { return }
-        UIView.performWithoutAnimation {
-            webView.transform = CGAffineTransform(scaleX: 1, y: bounds.height / webView.bounds.height)
-            webView.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        }
+        webView.transform = CGAffineTransform(scaleX: 1, y: bounds.height / webView.bounds.height)
+        webView.center = CGPoint(x: bounds.midX, y: bounds.midY)
     }
 
     /// 稳定后清除临时形变并同步真实视口，文字和点击区域恢复正常布局。
