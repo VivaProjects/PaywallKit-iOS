@@ -3,11 +3,14 @@ import SwiftUI
 /// 在根视图后台预热常驻点位；正式展示仍创建独立的购买桥和业务回调。
 @MainActor
 public struct PaywallCachedPreloadView: View {
+    @Environment(\.paywallPlacement) private var resolvedPlacement
+
     private struct Identity: Hashable {
         let clientID: UUID
         let placement: String
         let cacheIdentity: AnyHashable
         let enabled: Bool
+        let selectedURL: URL?
     }
 
     private let client: PaywallClient
@@ -53,7 +56,7 @@ public struct PaywallCachedPreloadView: View {
         .accessibilityHidden(true)
         .onDisappear { historyTask?.cancel() }
         .task(id: Identity(clientID: client.id, placement: placement,
-                           cacheIdentity: cacheIdentity, enabled: enabled)) {
+                           cacheIdentity: cacheIdentity, enabled: enabled, selectedURL: resolvedPlacement?.document.pageURL)) {
             await warmCache()
         }
     }
@@ -73,6 +76,8 @@ public struct PaywallCachedPreloadView: View {
             let selected: PaywallPlacement
             if context.local {
                 selected = try await client.resolveForPresentation(placement, context: context)
+            } else if let resolvedPlacement, resolvedPlacement.clientID == client.id, resolvedPlacement.name == placement {
+                selected = resolvedPlacement
             } else {
                 guard let remote = try await client.resolve(placement) else { return }
                 selected = remote

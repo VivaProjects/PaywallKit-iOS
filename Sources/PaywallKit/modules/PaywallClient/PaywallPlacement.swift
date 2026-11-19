@@ -20,7 +20,7 @@ private struct PaywallPlacementKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    var paywallPlacement: PaywallPlacement? {
+    public var paywallPlacement: PaywallPlacement? {
         get { self[PaywallPlacementKey.self] }
         set { self[PaywallPlacementKey.self] = newValue }
     }
