@@ -33,7 +33,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
     @State private var retryGeneration = 0
     @State private var sheetWidth: CGFloat?
     @State private var contentHeight: CGFloat?
-    @State private var lastReportedHeight: CGFloat?
+    @State private var needsWidthMeasurement = false
     @State private var pendingHeightUpdate: Task<Void, Never>?
     @State private var preparedPage: PaywallPreparedPage?
     @State private var preparingItem: Item?
@@ -133,11 +133,12 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
 
     /// 仅真实宽度变化才允许重新定高，系统竖向拖动不解锁本次结果。
     private func captureSheetWidth(_ width: CGFloat) {
-        guard width.isFinite, width > 0, sheetWidth != width else { return }
+        guard width.isFinite, width > 0 else { return }
+        if let sheetWidth, abs(sheetWidth - width) < 1 { return }
         if sheetWidth != nil {
             pendingHeightUpdate?.cancel()
-            contentHeight = nil
-            scheduleContentHeight(lastReportedHeight)
+            // 新宽度测量期间沿用当前高度，避免弹窗先展开到最大。
+            needsWidthMeasurement = true
         }
         sheetWidth = width
     }
@@ -145,14 +146,14 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
     /// 每次展示只接受首次稳定的内容高度；安全区由系统计入，避免重复计算。
     private func scheduleContentHeight(_ height: CGFloat?) {
         guard let height, height.isFinite, height > 0 else { return }
-        lastReportedHeight = height
-        guard activeItem != nil, contentHeight == nil else { return }
+        guard activeItem != nil, contentHeight == nil || needsWidthMeasurement else { return }
         pendingHeightUpdate?.cancel()
         pendingHeightUpdate = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 200_000_000)
-            guard !Task.isCancelled, activeItem != nil, contentHeight == nil else { return }
+            guard !Task.isCancelled, activeItem != nil, contentHeight == nil || needsWidthMeasurement else { return }
             preparedPage?.trace("presentation.detent", "height=\(height)")
             contentHeight = height
+            needsWidthMeasurement = false
             pendingHeightUpdate = nil
         }
     }
@@ -357,7 +358,6 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
               let height = page.cache.preparedContentHeight,
               height.isFinite, height > 0 else { return }
         contentHeight = height
-        lastReportedHeight = height
     }
 
     /// 超时任务可随取消和就绪自动结束，不因不可见 WebKit 暂停绘制而永久挂起。
@@ -385,7 +385,7 @@ private struct PaywallPresentationModifier<Item: Identifiable, Destination: View
         activeItem = nil
         isPushed = false
         contentHeight = nil
-        lastReportedHeight = nil
+        needsWidthMeasurement = false
         sheetWidth = nil
         resolvedPlacement = nil
         loadError = nil
